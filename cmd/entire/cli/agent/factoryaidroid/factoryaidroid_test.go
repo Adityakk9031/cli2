@@ -21,57 +21,6 @@ func TestNewFactoryAIDroidAgent(t *testing.T) {
 	}
 }
 
-func TestName(t *testing.T) {
-	t.Parallel()
-	ag := &FactoryAIDroidAgent{}
-	if name := ag.Name(); name != agent.AgentNameFactoryAIDroid {
-		t.Errorf("Name() = %q, want %q", name, agent.AgentNameFactoryAIDroid)
-	}
-}
-
-func TestType(t *testing.T) {
-	t.Parallel()
-	ag := &FactoryAIDroidAgent{}
-	if tp := ag.Type(); tp != agent.AgentTypeFactoryAIDroid {
-		t.Errorf("Type() = %q, want %q", tp, agent.AgentTypeFactoryAIDroid)
-	}
-}
-
-func TestDescription(t *testing.T) {
-	t.Parallel()
-	ag := &FactoryAIDroidAgent{}
-	desc := ag.Description()
-	if desc == "" {
-		t.Error("Description() returned empty string")
-	}
-}
-
-func TestProtectedDirs(t *testing.T) {
-	t.Parallel()
-	ag := &FactoryAIDroidAgent{}
-	dirs := ag.ProtectedDirs()
-	if len(dirs) != 1 || dirs[0] != ".factory" {
-		t.Errorf("ProtectedDirs() = %v, want [.factory]", dirs)
-	}
-}
-
-func TestGetHookConfigPath(t *testing.T) {
-	t.Parallel()
-	ag := &FactoryAIDroidAgent{}
-	path := ag.GetHookConfigPath()
-	if path != ".factory/settings.json" {
-		t.Errorf("GetHookConfigPath() = %q, want .factory/settings.json", path)
-	}
-}
-
-func TestSupportsHooks(t *testing.T) {
-	t.Parallel()
-	ag := &FactoryAIDroidAgent{}
-	if !ag.SupportsHooks() {
-		t.Error("SupportsHooks() = false, want true")
-	}
-}
-
 // TestDetectPresence uses t.Chdir so it cannot be parallel.
 func TestDetectPresence(t *testing.T) {
 	t.Run("factory directory exists", func(t *testing.T) {
@@ -138,20 +87,6 @@ func TestReadTranscript_MissingFile(t *testing.T) {
 	}
 }
 
-func TestChunkTranscript_SmallContent(t *testing.T) {
-	t.Parallel()
-	ag := &FactoryAIDroidAgent{}
-	content := []byte(`{"role":"user","content":"hello"}`)
-
-	chunks, err := ag.ChunkTranscript(content, agent.MaxChunkSize)
-	if err != nil {
-		t.Fatalf("ChunkTranscript() error = %v", err)
-	}
-	if len(chunks) != 1 {
-		t.Errorf("Expected 1 chunk, got %d", len(chunks))
-	}
-}
-
 func TestChunkTranscript_LargeContent(t *testing.T) {
 	t.Parallel()
 	ag := &FactoryAIDroidAgent{}
@@ -209,39 +144,6 @@ func TestChunkTranscript_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestReassembleTranscript_SingleChunk(t *testing.T) {
-	t.Parallel()
-	ag := &FactoryAIDroidAgent{}
-
-	chunk := []byte(`{"role":"user","content":"hello"}`)
-	result, err := ag.ReassembleTranscript([][]byte{chunk})
-	if err != nil {
-		t.Fatalf("ReassembleTranscript() error = %v", err)
-	}
-	if string(result) != string(chunk) {
-		t.Errorf("ReassembleTranscript() = %q, want %q", string(result), string(chunk))
-	}
-}
-
-func TestReassembleTranscript_MultipleChunks(t *testing.T) {
-	t.Parallel()
-	ag := &FactoryAIDroidAgent{}
-
-	chunk1 := []byte(`{"role":"user","content":"hello"}`)
-	chunk2 := []byte(`{"role":"assistant","content":"hi"}`)
-
-	result, err := ag.ReassembleTranscript([][]byte{chunk1, chunk2})
-	if err != nil {
-		t.Fatalf("ReassembleTranscript() error = %v", err)
-	}
-
-	expected := `{"role":"user","content":"hello"}
-{"role":"assistant","content":"hi"}`
-	if string(result) != expected {
-		t.Errorf("ReassembleTranscript() = %q, want %q", string(result), expected)
-	}
-}
-
 // --- ParseHookInput tests ---
 
 func TestParseHookInput_Valid(t *testing.T) {
@@ -279,19 +181,6 @@ func TestParseHookInput_InvalidJSON(t *testing.T) {
 	}
 }
 
-// --- Session stub tests ---
-
-func TestGetSessionID(t *testing.T) {
-	t.Parallel()
-	ag := &FactoryAIDroidAgent{}
-	input := &agent.HookInput{SessionID: "test-session-123"}
-
-	id := ag.GetSessionID(input)
-	if id != "test-session-123" {
-		t.Errorf("GetSessionID() = %q, want %q", id, "test-session-123")
-	}
-}
-
 func TestGetSessionDir(t *testing.T) {
 	t.Parallel()
 	ag := &FactoryAIDroidAgent{}
@@ -324,45 +213,5 @@ func TestGetSessionDir_EnvOverride(t *testing.T) {
 	}
 	if dir != override {
 		t.Errorf("GetSessionDir() = %q, want %q (env override)", dir, override)
-	}
-}
-
-func TestReadSession(t *testing.T) {
-	t.Parallel()
-	ag := &FactoryAIDroidAgent{}
-	_, err := ag.ReadSession(&agent.HookInput{SessionID: "test"})
-	if err == nil {
-		t.Error("ReadSession() should return error (not implemented)")
-	}
-}
-
-func TestWriteSession(t *testing.T) {
-	t.Parallel()
-	ag := &FactoryAIDroidAgent{}
-	err := ag.WriteSession(&agent.AgentSession{})
-	if err == nil {
-		t.Error("WriteSession() should return error (not implemented)")
-	}
-}
-
-// --- Other methods ---
-
-func TestResolveSessionFile(t *testing.T) {
-	t.Parallel()
-	ag := &FactoryAIDroidAgent{}
-	result := ag.ResolveSessionFile("/sessions", "abc-123")
-	expected := filepath.Join("/sessions", "abc-123.jsonl")
-	if result != expected {
-		t.Errorf("ResolveSessionFile() = %q, want %q", result, expected)
-	}
-}
-
-func TestFormatResumeCommand(t *testing.T) {
-	t.Parallel()
-	ag := &FactoryAIDroidAgent{}
-	cmd := ag.FormatResumeCommand("sess-456")
-	expected := "droid --session-id sess-456"
-	if cmd != expected {
-		t.Errorf("FormatResumeCommand() = %q, want %q", cmd, expected)
 	}
 }

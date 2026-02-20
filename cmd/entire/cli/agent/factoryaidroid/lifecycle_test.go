@@ -7,6 +7,39 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 )
 
+func TestGetHookNames(t *testing.T) {
+	t.Parallel()
+
+	ag := &FactoryAIDroidAgent{}
+	names := ag.GetHookNames()
+
+	expected := []string{
+		"session-start",
+		"session-end",
+		"stop",
+		"user-prompt-submit",
+		"pre-tool-use",
+		"post-tool-use",
+		"subagent-stop",
+		"pre-compact",
+		"notification",
+	}
+
+	if len(names) != len(expected) {
+		t.Fatalf("GetHookNames() returned %d hooks, want %d: got %v", len(names), len(expected), names)
+	}
+
+	nameSet := make(map[string]bool, len(names))
+	for _, n := range names {
+		nameSet[n] = true
+	}
+	for _, want := range expected {
+		if !nameSet[want] {
+			t.Errorf("GetHookNames() missing expected hook %q", want)
+		}
+	}
+}
+
 func TestParseHookEvent_SessionStart(t *testing.T) {
 	t.Parallel()
 
