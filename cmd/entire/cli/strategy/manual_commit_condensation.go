@@ -11,6 +11,7 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/agent/claudecode"
+	"github.com/entireio/cli/cmd/entire/cli/agent/factoryaidroid"
 	"github.com/entireio/cli/cmd/entire/cli/agent/geminicli"
 	cpkg "github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint/id"
@@ -502,6 +503,26 @@ func extractUserPrompts(agentType agent.AgentType, content string) []string {
 		return nil
 	}
 
+	// Droid has its own envelope format — use its parser to normalize first
+	if agentType == agent.AgentTypeFactoryAIDroid {
+		lines, err := factoryaidroid.ParseDroidTranscriptFromBytes([]byte(content))
+		if err != nil {
+			return nil
+		}
+		var prompts []string
+		for _, line := range lines {
+			if line.Type != transcript.TypeUser {
+				continue
+			}
+			if text := transcript.ExtractUserContent(line.Message); text != "" {
+				if stripped := textutil.StripIDEContextTags(text); stripped != "" {
+					prompts = append(prompts, stripped)
+				}
+			}
+		}
+		return prompts
+	}
+
 	// Try Gemini format first if agentType is Gemini, or as fallback if Unknown
 	if agentType == agent.AgentTypeGemini || agentType == agent.AgentTypeUnknown {
 		prompts, err := geminicli.ExtractAllUserPrompts([]byte(content))
@@ -533,6 +554,18 @@ func extractUserPrompts(agentType agent.AgentType, content string) []string {
 func calculateTokenUsage(agentType agent.AgentType, data []byte, startOffset int) *agent.TokenUsage {
 	if len(data) == 0 {
 		return &agent.TokenUsage{}
+	}
+
+	// Droid has its own envelope format — use its parser to normalize first
+	if agentType == agent.AgentTypeFactoryAIDroid {
+		lines, err := factoryaidroid.ParseDroidTranscriptFromBytes(data)
+		if err != nil || len(lines) == 0 {
+			return &agent.TokenUsage{}
+		}
+		if startOffset > 0 && startOffset < len(lines) {
+			lines = lines[startOffset:]
+		}
+		return factoryaidroid.CalculateTokenUsage(lines)
 	}
 
 	// Try Gemini format first if agentType is Gemini, or as fallback if Unknown

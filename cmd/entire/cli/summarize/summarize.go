@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/entireio/cli/cmd/entire/cli/agent/factoryaidroid"
 	"github.com/entireio/cli/cmd/entire/cli/agent/geminicli"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/transcript"
@@ -116,7 +117,14 @@ func BuildCondensedTranscriptFromBytes(content []byte, agentType agent.AgentType
 	switch agentType {
 	case agent.AgentTypeGemini:
 		return buildCondensedTranscriptFromGemini(content)
-	case agent.AgentTypeClaudeCode, agent.AgentTypeFactoryAIDroid, agent.AgentTypeUnknown:
+	case agent.AgentTypeFactoryAIDroid:
+		// Droid has its own envelope format — normalize before condensing
+		droidLines, err := factoryaidroid.ParseDroidTranscriptFromBytes(content)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse Droid transcript: %w", err)
+		}
+		return BuildCondensedTranscript(droidLines), nil
+	case agent.AgentTypeClaudeCode, agent.AgentTypeUnknown:
 		// Claude format - fall through to shared logic below
 	}
 	// Claude format (JSONL) - handles Claude Code, Unknown, and any future agent types
