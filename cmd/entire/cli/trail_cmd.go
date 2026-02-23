@@ -205,36 +205,67 @@ func runTrailCreate(w, errW io.Writer, title, description, base, branch, statusS
 		}
 	}
 
-	// Determine branch
 	_, currentBranch, _ := IsOnDefaultBranch() //nolint:errcheck // best-effort detection
-	if branch == "" {
-		// Interactive: prompt for branch name with current branch as placeholder
-		placeholder := currentBranch
-		if placeholder == "" {
-			placeholder = "feat/my-feature"
-		}
-		var inputBranch string
+	interactive := !hasFlag("title") && !hasFlag("branch")
+
+	// Step 1: Determine title (interactive: prompt first, derive branch from it)
+	if title == "" && interactive {
+		var inputTitle string
 		form := NewAccessibleForm(
 			huh.NewGroup(
 				huh.NewInput().
-					Title("Branch name").
-					Placeholder(placeholder).
-					Value(&inputBranch),
+					Title("Trail title").
+					Placeholder("What are you working on?").
+					Value(&inputTitle),
 			),
 		)
 		if formErr := form.Run(); formErr != nil {
 			return fmt.Errorf("form cancelled: %w", formErr)
 		}
-		inputBranch = strings.TrimSpace(inputBranch)
-		if inputBranch == "" {
-			// Use current branch if user just pressed enter
+		title = strings.TrimSpace(inputTitle)
+		if title == "" {
+			return errors.New("trail title is required")
+		}
+	}
+
+	// Step 2: Determine branch
+	if branch == "" {
+		switch {
+		case interactive:
+			// Derive branch name from title, let user override
+			suggested := slugifyTitle(title)
+			var inputBranch string
+			form := NewAccessibleForm(
+				huh.NewGroup(
+					huh.NewInput().
+						Title("Branch name").
+						Placeholder(suggested).
+						Value(&inputBranch),
+				),
+			)
+			if formErr := form.Run(); formErr != nil {
+				return fmt.Errorf("form cancelled: %w", formErr)
+			}
+			inputBranch = strings.TrimSpace(inputBranch)
+			if inputBranch != "" {
+				branch = inputBranch
+			} else {
+				branch = suggested
+			}
+		case hasFlag("title"):
+			// --title provided without --branch: derive branch from title
+			branch = slugifyTitle(title)
+		default:
 			branch = currentBranch
-		} else {
-			branch = inputBranch
 		}
 		if branch == "" {
 			return errors.New("branch name is required")
 		}
+	}
+
+	// If title still empty (non-interactive with --branch only), derive from branch
+	if title == "" {
+		title = trail.HumanizeBranchName(branch)
 	}
 
 	// Create the branch if it doesn't exist
@@ -254,34 +285,6 @@ func runTrailCreate(w, errW io.Writer, title, description, base, branch, statusS
 	if err == nil && existing != nil {
 		fmt.Fprintf(w, "Trail already exists for branch %q (ID: %s)\n", branch, existing.TrailID)
 		return nil
-	}
-
-	// Determine title
-	if title == "" {
-		defaultTitle := trail.HumanizeBranchName(branch)
-
-		// Interactive mode if flags not provided
-		if !hasFlag("title") {
-			var inputTitle string
-			form := NewAccessibleForm(
-				huh.NewGroup(
-					huh.NewInput().
-						Title("Trail title").
-						Placeholder(defaultTitle).
-						Value(&inputTitle),
-				),
-			)
-			if formErr := form.Run(); formErr != nil {
-				return fmt.Errorf("form cancelled: %w", formErr)
-			}
-			if inputTitle != "" {
-				title = inputTitle
-			} else {
-				title = defaultTitle
-			}
-		} else {
-			title = defaultTitle
-		}
 	}
 
 	// Determine status
@@ -581,6 +584,27 @@ func removeString(slice []string, s string) []string {
 		}
 	}
 	return result
+}
+
+// slugifyTitle converts a title string into a branch-friendly slug.
+// Example: "Add user authentication" -> "add-user-authentication"
+func slugifyTitle(title string) string {
+	s := strings.ToLower(strings.TrimSpace(title))
+	// Replace spaces and underscores with hyphens
+	s = strings.NewReplacer(" ", "-", "_", "-").Replace(s)
+	// Remove anything that's not alphanumeric, hyphen, or slash
+	var b strings.Builder
+	prevHyphen := false
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '/' {
+			b.WriteRune(r)
+			prevHyphen = false
+		} else if r == '-' && !prevHyphen {
+			b.WriteRune('-')
+			prevHyphen = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 // branchNeedsCreation checks if a branch exists locally.
