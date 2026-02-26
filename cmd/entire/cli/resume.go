@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
@@ -207,8 +208,14 @@ func resumeMultipleCheckpoints(ctx context.Context, repo *git.Repository, checkp
 		}
 	}
 
+	type sessionEntry struct {
+		index     int
+		CreatedAt time.Time
+	}
+
 	strat := GetStrategy(ctx)
 	var allSessions []strategy.RestoredSession
+	seen := make(map[string]sessionEntry)
 
 	for _, cpID := range checkpointIDs {
 		metadata, metaErr := strategy.ReadCheckpointMetadata(metadataTree, cpID.Path())
@@ -241,7 +248,17 @@ func resumeMultipleCheckpoints(ctx context.Context, repo *git.Repository, checkp
 			continue
 		}
 
-		allSessions = append(allSessions, sessions...)
+		for _, sess := range sessions {
+			if prev, exists := seen[sess.SessionID]; exists {
+				// Keep the one with the later CreatedAt (more complete transcript)
+				if sess.CreatedAt.After(prev.CreatedAt) {
+					allSessions[seen[sess.SessionID].index] = sess
+				}
+			} else {
+				seen[sess.SessionID] = sessionEntry{index: len(allSessions), CreatedAt: sess.CreatedAt}
+				allSessions = append(allSessions, sess)
+			}
+		}
 	}
 
 	if len(allSessions) == 0 {
