@@ -323,7 +323,10 @@ func EnsureMetadataBranch(repo *git.Repository) error {
 		if remoteErr == nil && localRef.Hash() != remoteRef.Hash() {
 			// Local and remote exist but differ — determine relationship
 			isEmpty, checkErr := isEmptyMetadataBranch(repo, localRef)
-			if checkErr == nil && isEmpty {
+			if checkErr != nil {
+				return fmt.Errorf("failed to check metadata branch contents: %w", checkErr)
+			}
+			if isEmpty {
 				// Empty orphan — just point to remote
 				ref := plumbing.NewHashReference(refName, remoteRef.Hash())
 				if setErr := repo.Storer.SetReference(ref); setErr != nil {
