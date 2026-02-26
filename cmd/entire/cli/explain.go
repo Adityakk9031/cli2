@@ -886,6 +886,11 @@ func walkFirstParentCommits(repo *git.Repository, from plumbing.Hash, limit int,
 //   - On default branch (main/master): show all checkpoints in history (up to limit)
 //   - Includes both committed checkpoints (entire/checkpoints/v1) and temporary checkpoints (shadow branches)
 func getBranchCheckpoints(ctx context.Context, repo *git.Repository, limit int) ([]strategy.RewindPoint, error) {
+	// Ensure disconnected metadata branches are reconciled before reading
+	if err := strategy.EnsureMetadataReconciled(repo); err != nil {
+		logging.Warn(ctx, "metadata reconciliation failed", "error", err)
+	}
+
 	store := checkpoint.NewGitStore(repo)
 
 	// Get all committed checkpoints for lookup

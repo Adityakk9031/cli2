@@ -1176,7 +1176,7 @@ func cloneWithConfig(t *testing.T, bareDir string) (string, func(args ...string)
 	return cloneDir, run
 }
 
-func TestEnsureMetadataBranch_ReconcilesDisconnectedBranches(t *testing.T) {
+func TestEnsureMetadataBranch_DisconnectedBranchesNotReconciledInEnable(t *testing.T) {
 	t.Parallel()
 
 	bareDir := initBareWithMetadataBranch(t)
@@ -1204,45 +1204,30 @@ func TestEnsureMetadataBranch_ReconcilesDisconnectedBranches(t *testing.T) {
 		t.Fatalf("failed to open repo: %v", err)
 	}
 
+	// Get local ref hash before EnsureMetadataBranch
+	refName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
+	localRefBefore, err := repo.Reference(refName, true)
+	if err != nil {
+		t.Fatalf("local branch not found: %v", err)
+	}
+
 	if err := EnsureMetadataBranch(repo); err != nil {
 		t.Fatalf("EnsureMetadataBranch() failed: %v", err)
 	}
 
-	// Verify merged tree contains entries from BOTH local and remote
-	ref, err := repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true)
+	// EnsureMetadataBranch should NOT reconcile disconnected branches (that's now
+	// handled by ReconcileDisconnectedMetadataBranch at read/write time).
+	// The local branch should be unchanged.
+	localRefAfter, err := repo.Reference(refName, true)
 	if err != nil {
 		t.Fatalf("local branch not found: %v", err)
 	}
-	commit, err := repo.CommitObject(ref.Hash())
-	if err != nil {
-		t.Fatalf("failed to get commit: %v", err)
-	}
-	if len(commit.ParentHashes) != 2 {
-		t.Errorf("expected merge commit with 2 parents, got %d", len(commit.ParentHashes))
-	}
-	tree, err := commit.Tree()
-	if err != nil {
-		t.Fatalf("failed to get tree: %v", err)
-	}
-	hasRemoteData := false
-	hasLocalData := false
-	for _, entry := range tree.Entries {
-		if entry.Name == "metadata.json" {
-			hasRemoteData = true
-		}
-		if entry.Name == "ab" {
-			hasLocalData = true
-		}
-	}
-	if !hasRemoteData {
-		t.Error("merged tree missing remote checkpoint data (metadata.json)")
-	}
-	if !hasLocalData {
-		t.Error("merged tree missing local checkpoint data (ab/ shard)")
+	if localRefAfter.Hash() != localRefBefore.Hash() {
+		t.Error("EnsureMetadataBranch should not modify disconnected local branch with real data")
 	}
 }
 
-func TestEnsureMetadataBranch_FastForwardsWhenBehind(t *testing.T) {
+func TestEnsureMetadataBranch_DoesNotFastForwardWhenBehind(t *testing.T) {
 	t.Parallel()
 
 	bareDir := initBareWithMetadataBranch(t)
@@ -1297,18 +1282,14 @@ func TestEnsureMetadataBranch_FastForwardsWhenBehind(t *testing.T) {
 		t.Fatalf("second EnsureMetadataBranch() failed: %v", err)
 	}
 
-	// Should have fast-forwarded to remote
-	remoteRef, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", paths.MetadataBranchName), true)
-	if err != nil {
-		t.Fatalf("remote ref not found: %v", err)
-	}
+	// EnsureMetadataBranch no longer fast-forwards diverged branches (handled by push path).
+	// Local should be unchanged since it has real data and shares ancestry with remote.
 	localAfter, err := repo.Reference(refName, true)
 	if err != nil {
 		t.Fatalf("local branch not found: %v", err)
 	}
-	if localAfter.Hash() != remoteRef.Hash() {
-		t.Errorf("local was not fast-forwarded to remote: local=%s remote=%s",
-			localAfter.Hash().String()[:7], remoteRef.Hash().String()[:7])
+	if localAfter.Hash() != localBefore.Hash() {
+		t.Error("EnsureMetadataBranch should not modify local branch with shared ancestry")
 	}
 }
 

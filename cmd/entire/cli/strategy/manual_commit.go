@@ -3,6 +3,7 @@ package strategy
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
@@ -50,6 +51,9 @@ func (s *ManualCommitStrategy) getCheckpointStore() (*checkpoint.GitStore, error
 		if err != nil {
 			s.checkpointStoreErr = fmt.Errorf("failed to open repository: %w", err)
 			return
+		}
+		if err := EnsureMetadataReconciled(repo); err != nil {
+			fmt.Fprintf(os.Stderr, "[entire] Warning: %v\n", err)
 		}
 		s.checkpointStore = checkpoint.NewGitStore(repo)
 	})
