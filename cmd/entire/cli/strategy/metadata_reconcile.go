@@ -188,11 +188,15 @@ func cherryPickOnto(repo *git.Repository, base plumbing.Hash, commits []*object.
 		parentEntries := make(map[string]object.TreeEntry)
 		if len(commit.ParentHashes) > 0 {
 			parentCommit, pErr := repo.CommitObject(commit.ParentHashes[0])
-			if pErr == nil {
-				parentTree, ptErr := parentCommit.Tree()
-				if ptErr == nil {
-					_ = checkpoint.FlattenTree(repo, parentTree, "", parentEntries) //nolint:errcheck // best effort
-				}
+			if pErr != nil {
+				return plumbing.ZeroHash, fmt.Errorf("failed to get parent commit %s: %w", commit.ParentHashes[0], pErr)
+			}
+			parentTree, ptErr := parentCommit.Tree()
+			if ptErr != nil {
+				return plumbing.ZeroHash, fmt.Errorf("failed to get parent tree for commit %s: %w", commit.ParentHashes[0], ptErr)
+			}
+			if err := checkpoint.FlattenTree(repo, parentTree, "", parentEntries); err != nil {
+				return plumbing.ZeroHash, fmt.Errorf("failed to flatten parent tree for commit %s: %w", commit.ParentHashes[0], err)
 			}
 		}
 
