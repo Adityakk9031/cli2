@@ -219,6 +219,7 @@ func TestHandleLifecycleTurnEnd_NonexistentTranscript(t *testing.T) {
 // simulating OpenCode's lazy-fetch behavior.
 type mockPreparerAgent struct {
 	mockLifecycleAgent
+
 	prepareTranscriptCalled bool
 }
 

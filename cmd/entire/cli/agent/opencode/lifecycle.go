@@ -12,6 +12,7 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
+	"github.com/entireio/cli/cmd/entire/cli/validation"
 )
 
 // Hook name constants — these become CLI subcommands under `entire hooks opencode`.
@@ -140,7 +141,7 @@ func (a *OpenCodeAgent) PrepareTranscript(ctx context.Context, sessionRef string
 
 // sessionTranscriptPath validates the session ID and returns the expected transcript path.
 func sessionTranscriptPath(ctx context.Context, sessionID string) (string, error) {
-	if err := validateSessionID(sessionID); err != nil {
+	if err := validation.ValidateSessionID(sessionID); err != nil {
 		return "", err
 	}
 	repoRoot, err := paths.WorktreeRoot(ctx)
@@ -148,21 +149,6 @@ func sessionTranscriptPath(ctx context.Context, sessionID string) (string, error
 		repoRoot = "."
 	}
 	return filepath.Join(repoRoot, paths.EntireTmpDir, sessionID+".json"), nil
-}
-
-// validateSessionID checks that a session ID is safe for use in file paths.
-// Rejects empty strings, path separators, and traversal attempts.
-func validateSessionID(id string) error {
-	if strings.TrimSpace(id) == "" {
-		return fmt.Errorf("invalid session ID: empty")
-	}
-	if strings.ContainsAny(id, "/\\") {
-		return fmt.Errorf("invalid session ID: contains path separator: %q", id)
-	}
-	if id != filepath.Base(id) {
-		return fmt.Errorf("invalid session ID: not a simple filename: %q", id)
-	}
-	return nil
 }
 
 // fetchAndCacheExport calls `opencode export <sessionID>` and writes the result
@@ -173,7 +159,7 @@ func validateSessionID(id string) error {
 // pre-write the transcript file to .entire/tmp/<sessionID>.json before
 // triggering the hook. See integration_test/hooks.go:SimulateOpenCodeTurnEnd.
 func (a *OpenCodeAgent) fetchAndCacheExport(ctx context.Context, sessionID string) (string, error) {
-	if err := validateSessionID(sessionID); err != nil {
+	if err := validation.ValidateSessionID(sessionID); err != nil {
 		return "", err
 	}
 

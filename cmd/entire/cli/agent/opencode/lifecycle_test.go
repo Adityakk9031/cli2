@@ -314,8 +314,8 @@ func TestParseHookEvent_TurnStart_InvalidSessionID(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for path-traversal session ID")
 	}
-	if !strings.Contains(err.Error(), "invalid session ID") {
-		t.Errorf("expected 'invalid session ID' error, got: %v", err)
+	if !strings.Contains(err.Error(), "contains path separators") {
+		t.Errorf("expected 'contains path separators' error, got: %v", err)
 	}
 }
 
@@ -330,36 +330,7 @@ func TestParseHookEvent_TurnEnd_InvalidSessionID(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for path-traversal session ID")
 	}
-	if !strings.Contains(err.Error(), "invalid session ID") {
-		t.Errorf("expected 'invalid session ID' error, got: %v", err)
-	}
-}
-
-func TestValidateSessionID(t *testing.T) {
-	t.Parallel()
-
-	valid := []string{
-		"ses_abc123",
-		"d9a188e3-7650-4cec-956f-4ef44baba166",
-		"abc123",
-	}
-	for _, id := range valid {
-		if err := validateSessionID(id); err != nil {
-			t.Errorf("should accept %q, got error: %v", id, err)
-		}
-	}
-
-	invalid := []string{
-		"../escape",
-		"/absolute",
-		"has/slash",
-		"has\\backslash",
-		"",
-		"   ",
-	}
-	for _, id := range invalid {
-		if err := validateSessionID(id); err == nil {
-			t.Errorf("should reject %q, got nil error", id)
-		}
+	if !strings.Contains(err.Error(), "contains path separators") {
+		t.Errorf("expected 'contains path separators' error, got: %v", err)
 	}
 }
