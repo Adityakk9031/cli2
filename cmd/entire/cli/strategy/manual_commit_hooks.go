@@ -24,7 +24,6 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/session"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
 	"github.com/entireio/cli/cmd/entire/cli/stringutil"
-	"github.com/entireio/cli/cmd/entire/cli/summarize"
 	"github.com/entireio/cli/cmd/entire/cli/trail"
 	"github.com/entireio/cli/cmd/entire/cli/trailers"
 	"github.com/entireio/cli/redact"
@@ -1008,16 +1007,13 @@ func (s *ManualCommitStrategy) condenseAndUpdateState(
 		return false
 	}
 
-	// Link checkpoint to trail and optionally generate title (best-effort)
+	// Link checkpoint to trail (best-effort)
 	branchName := GetCurrentBranchName(repo)
 	if branchName != "" && branchName != GetDefaultBranchName(repo) {
 		store := trail.NewStore(repo)
 		existing, findErr := store.FindByBranch(branchName)
 		if findErr == nil && existing != nil {
 			appendCheckpointToExistingTrail(store, existing.TrailID, result.CheckpointID, head.Hash(), result.Prompts)
-			if existing.Body == "" && len(result.Transcript) > 0 {
-				generateTrailTitleForTrail(store, existing.TrailID, result.Transcript, result.FilesTouched, state.AgentType)
-			}
 		}
 	}
 
@@ -2235,35 +2231,6 @@ func (s *ManualCommitStrategy) carryForwardToNewShadowBranch(
 		slog.String("session_id", state.SessionID),
 		slog.Int("remaining_files", len(remainingFiles)),
 	)
-}
-
-// generateTrailTitleForTrail uses the agent's text generation capability
-// to generate a proper title and description for the trail. Best-effort: silently
-// returns on any error.
-func generateTrailTitleForTrail(store *trail.Store, trailID trail.ID, transcriptBytes []byte, filesTouched []string, agentType types.AgentType) {
-	if !settings.IsSummarizeEnabled(context.Background()) {
-		return
-	}
-
-	logCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	logCtx = logging.WithComponent(logCtx, "trail-title")
-	result, err := summarize.GenerateTrailTitle(logCtx, transcriptBytes, filesTouched, agentType)
-	if err != nil {
-		logging.Debug(logCtx, "trail title generation skipped",
-			slog.String("error", err.Error()))
-		return
-	}
-
-	//nolint:errcheck,gosec // best-effort: trail title generation is non-critical
-	store.Update(trailID, func(m *trail.Metadata) {
-		if result.Title != "" {
-			m.Title = result.Title
-		}
-		if result.Body != "" {
-			m.Body = result.Body
-		}
-	})
 }
 
 // appendCheckpointToExistingTrail links a checkpoint to the given trail.
