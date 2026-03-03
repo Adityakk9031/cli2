@@ -196,6 +196,67 @@ func TransitionAndLog(goCtx context.Context, state *SessionState, event session.
 	return nil
 }
 
+// StoreModelHint writes the LLM model name to a lightweight hint file
+// (.git/entire-sessions/{session_id}.model) for cross-process persistence.
+//
+// Why a separate file instead of SessionState?
+//
+// SessionState requires BaseCommit (used for shadow branch naming, checkpoint
+// writing, doctor classification, etc.) and is only created during TurnStart
+// when the git repo is fully inspected. Some agents report the model on earlier
+// hooks that fire as separate CLI processes before TurnStart:
+//
+//   - Claude Code sends "model" on SessionStart (before any TurnStart)
+//   - Gemini CLI sends "llm_request.model" on BeforeModel (after TurnStart,
+//     so handleLifecycleModelUpdate writes to SessionState directly when it
+//     exists and only falls back to this hint file otherwise)
+//
+// The hint is read by handleLifecycleTurnStart/TurnEnd when event.Model is
+// empty, passed to InitializeSession, and persisted in state.ModelName. After
+// that the hint file is redundant — it sits unused until ClearSessionState
+// removes it alongside the session state file.
+func StoreModelHint(ctx context.Context, sessionID, model string) error {
+	if err := validation.ValidateSessionID(sessionID); err != nil {
+		return fmt.Errorf("invalid session ID: %w", err)
+	}
+	if model == "" {
+		return nil
+	}
+
+	stateDir, err := getSessionStateDir(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get session state directory: %w", err)
+	}
+	if err := os.MkdirAll(stateDir, 0o750); err != nil {
+		return fmt.Errorf("failed to create session state directory: %w", err)
+	}
+
+	hintFile := filepath.Join(stateDir, sessionID+".model")
+	if err := os.WriteFile(hintFile, []byte(model), 0o600); err != nil {
+		return fmt.Errorf("failed to write model hint file: %w", err)
+	}
+	return nil
+}
+
+// LoadModelHint reads the LLM model name from the hint file for the given session.
+// Returns empty string if the hint file doesn't exist or can't be read.
+func LoadModelHint(ctx context.Context, sessionID string) string {
+	if err := validation.ValidateSessionID(sessionID); err != nil {
+		return ""
+	}
+
+	stateDir, err := getSessionStateDir(ctx)
+	if err != nil {
+		return ""
+	}
+
+	data, err := os.ReadFile(filepath.Join(stateDir, sessionID+".model")) //nolint:gosec // sessionID is validated above
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
 // ClearSessionState removes the session state file for the given session ID.
 func ClearSessionState(ctx context.Context, sessionID string) error {
 	// Validate session ID to prevent path traversal
@@ -214,5 +275,14 @@ func ClearSessionState(ctx context.Context, sessionID string) error {
 		}
 		return fmt.Errorf("failed to remove session state file: %w", err)
 	}
+
+	// Best-effort cleanup of the model hint file
+	hintFile := stateFile[:len(stateFile)-len(".json")] + ".model"
+	if err := os.Remove(hintFile); err != nil && !os.IsNotExist(err) {
+		logging.Warn(logging.WithComponent(ctx, "session"), "failed to remove model hint file",
+			slog.String("path", hintFile),
+			slog.Any("error", err))
+	}
+
 	return nil
 }
