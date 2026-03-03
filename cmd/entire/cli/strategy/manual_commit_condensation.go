@@ -571,40 +571,6 @@ func countTranscriptItems(agentType types.AgentType, content string) int {
 	return len(allLines)
 }
 
-// extractCheckpointPrompts extracts user prompts from only the checkpoint portion of a transcript.
-// For JSONL agents (Claude Code, Cursor), checkpointStart is a line offset.
-// For JSON agents (Gemini, OpenCode), checkpointStart is a message index.
-func extractCheckpointPrompts(agentType types.AgentType, fullTranscript []byte, checkpointStart int) []string {
-	if len(fullTranscript) == 0 {
-		return nil
-	}
-
-	// Scope the transcript to the checkpoint portion
-	var scoped []byte
-	switch agentType {
-	case agent.AgentTypeGemini:
-		var err error
-		scoped, err = geminicli.SliceFromMessage(fullTranscript, checkpointStart)
-		if err != nil {
-			scoped = fullTranscript // fallback to full on error
-		}
-	case agent.AgentTypeOpenCode:
-		var err error
-		scoped, err = opencode.SliceFromMessage(fullTranscript, checkpointStart)
-		if err != nil {
-			scoped = fullTranscript // fallback to full on error
-		}
-	default:
-		// Claude Code, Cursor, Unknown — JSONL line offset
-		scoped = transcript.SliceFromLine(fullTranscript, checkpointStart)
-		if scoped == nil {
-			scoped = fullTranscript // fallback to full if offset beyond content
-		}
-	}
-
-	return extractUserPrompts(agentType, string(scoped))
-}
-
 // extractUserPrompts extracts all user prompts from transcript content.
 // Returns prompts with IDE context tags stripped (e.g., <ide_opened_file>).
 func extractUserPrompts(agentType types.AgentType, content string) []string {
