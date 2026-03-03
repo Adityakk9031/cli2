@@ -142,7 +142,7 @@ func (a *OpenCodeAgent) PrepareTranscript(ctx context.Context, sessionRef string
 // sessionTranscriptPath validates the session ID and returns the expected transcript path.
 func sessionTranscriptPath(ctx context.Context, sessionID string) (string, error) {
 	if err := validation.ValidateSessionID(sessionID); err != nil {
-		return "", err
+		return "", fmt.Errorf("invalid session ID for transcript path: %w", err)
 	}
 	repoRoot, err := paths.WorktreeRoot(ctx)
 	if err != nil {
@@ -160,7 +160,7 @@ func sessionTranscriptPath(ctx context.Context, sessionID string) (string, error
 // triggering the hook. See integration_test/hooks.go:SimulateOpenCodeTurnEnd.
 func (a *OpenCodeAgent) fetchAndCacheExport(ctx context.Context, sessionID string) (string, error) {
 	if err := validation.ValidateSessionID(sessionID); err != nil {
-		return "", err
+		return "", fmt.Errorf("invalid session ID for export: %w", err)
 	}
 
 	// Get worktree root for the temp directory
