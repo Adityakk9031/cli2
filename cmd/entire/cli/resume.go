@@ -163,13 +163,13 @@ func resumeFromCurrentBranch(ctx context.Context, branchName string, force bool)
 		latest, tree, err := resolveLatestCheckpoint(ctx, repo, result.checkpointIDs)
 		if err != nil {
 			// No metadata available — nothing to resume from
-			fmt.Fprintf(os.Stderr, "Found %d checkpoints on the latest commit but metadata is not available\n",
-				len(result.checkpointIDs))
+			fmt.Fprintf(os.Stderr, "Found %d checkpoints for commit %s but metadata is not available\n",
+				len(result.checkpointIDs), result.commitHash[:7])
 			return checkRemoteMetadata(ctx, repo, result.checkpointIDs[0])
 		}
 		skipped := len(result.checkpointIDs) - 1
-		fmt.Fprintf(os.Stderr, "Found %d checkpoints on the latest commit in this branch, resuming from the latest (%d older checkpoints skipped)\n",
-			len(result.checkpointIDs), skipped)
+		fmt.Fprintf(os.Stderr, "Found %d checkpoints for commit %s, resuming from the latest (%d older checkpoints skipped)\n",
+			len(result.checkpointIDs), result.commitHash[:7], skipped)
 		checkpointID = latest
 		metadataTree = tree
 	}
