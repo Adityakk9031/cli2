@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"sync"
 	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
+	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 
 	"github.com/go-git/go-git/v5"
@@ -59,15 +62,26 @@ func IsMetadataDisconnected(ctx context.Context, repo *git.Repository) (bool, er
 // WarnIfMetadataDisconnected checks (once per process) whether the metadata
 // branch is disconnected and prints a warning to stderr if so.
 // It does NOT fix the problem — users are directed to 'entire doctor'.
+//
+// Uses sync.Once, so a transient failure on the first call permanently suppresses
+// the warning. This is acceptable because the check is advisory only and
+// 'entire doctor' is the authoritative repair path.
 func WarnIfMetadataDisconnected() {
 	disconnectedOnce.Do(func() {
 		ctx := context.Background()
 		repo, err := OpenRepository(ctx)
 		if err != nil {
+			logging.Debug(ctx, "metadata disconnection check: could not open repository",
+				slog.String("error", err.Error()))
 			return
 		}
 		disconnected, err := IsMetadataDisconnected(ctx, repo)
-		if err != nil || !disconnected {
+		if err != nil {
+			logging.Debug(ctx, "metadata disconnection check failed",
+				slog.String("error", err.Error()))
+			return
+		}
+		if !disconnected {
 			return
 		}
 		fmt.Fprintln(os.Stderr, "[entire] Warning: Local and remote session metadata branches are disconnected.")
@@ -83,7 +97,10 @@ func WarnIfMetadataDisconnected() {
 // Repair strategy: cherry-pick local commits onto remote tip, preserving all data.
 // Checkpoint shards use unique paths (<id[:2]>/<id[2:]>/), so cherry-picks always
 // apply cleanly.
-func ReconcileDisconnectedMetadataBranch(ctx context.Context, repo *git.Repository) error {
+//
+// Progress messages are written to w (typically os.Stderr for hooks or
+// cmd.ErrOrStderr() for commands).
+func ReconcileDisconnectedMetadataBranch(ctx context.Context, repo *git.Repository, w io.Writer) error {
 	refName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
 
 	// Check local branch
@@ -129,7 +146,7 @@ func ReconcileDisconnectedMetadataBranch(ctx context.Context, repo *git.Reposito
 	}
 
 	// Disconnected — cherry-pick local commits onto remote tip
-	fmt.Fprintln(os.Stderr, "[entire] Detected disconnected session metadata (local and remote share no common ancestor)")
+	fmt.Fprintln(w, "[entire] Detected disconnected session metadata (local and remote share no common ancestor)")
 
 	// Collect local commits oldest-first
 	localCommits, err := collectCommitChain(repo, localHash)
@@ -155,11 +172,11 @@ func ReconcileDisconnectedMetadataBranch(ctx context.Context, repo *git.Reposito
 		if err := repo.Storer.SetReference(ref); err != nil {
 			return fmt.Errorf("failed to reset metadata branch to remote: %w", err)
 		}
-		fmt.Fprintln(os.Stderr, "[entire] Done — local had no checkpoint data, reset to remote")
+		fmt.Fprintln(w, "[entire] Done — local had no checkpoint data, reset to remote")
 		return nil
 	}
 
-	fmt.Fprintf(os.Stderr, "[entire] Cherry-picking %d local checkpoint(s) onto remote...\n", len(dataCommits))
+	fmt.Fprintf(w, "[entire] Cherry-picking %d local checkpoint(s) onto remote...\n", len(dataCommits))
 
 	newTip, err := cherryPickOnto(repo, remoteHash, dataCommits)
 	if err != nil {
@@ -172,7 +189,7 @@ func ReconcileDisconnectedMetadataBranch(ctx context.Context, repo *git.Reposito
 		return fmt.Errorf("failed to update metadata branch: %w", err)
 	}
 
-	fmt.Fprintln(os.Stderr, "[entire] Done — all local and remote checkpoints preserved")
+	fmt.Fprintln(w, "[entire] Done — all local and remote checkpoints preserved")
 	return nil
 }
 

@@ -350,7 +350,7 @@ func checkDisconnectedMetadata(cmd *cobra.Command, force bool) error {
 		}
 	}
 
-	if fixErr := strategy.ReconcileDisconnectedMetadataBranch(ctx, repo); fixErr != nil {
+	if fixErr := strategy.ReconcileDisconnectedMetadataBranch(ctx, repo, cmd.ErrOrStderr()); fixErr != nil {
 		return fmt.Errorf("failed to reconcile metadata branches: %w", fixErr)
 	}
 

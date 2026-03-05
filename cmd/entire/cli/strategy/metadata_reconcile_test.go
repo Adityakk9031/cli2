@@ -2,11 +2,13 @@ package strategy
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/entireio/cli/cmd/entire/cli/checkpoint"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
@@ -14,6 +16,8 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestReconcileDisconnected_NoRemote(t *testing.T) {
@@ -53,7 +57,7 @@ func TestReconcileDisconnected_NoRemote(t *testing.T) {
 	}
 
 	// Should be a no-op (no remote)
-	if err := ReconcileDisconnectedMetadataBranch(context.Background(), repo); err != nil {
+	if err := ReconcileDisconnectedMetadataBranch(context.Background(), repo, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -71,7 +75,7 @@ func TestReconcileDisconnected_NoLocal(t *testing.T) {
 	}
 
 	// No local branch → no-op
-	if err := ReconcileDisconnectedMetadataBranch(context.Background(), repo); err != nil {
+	if err := ReconcileDisconnectedMetadataBranch(context.Background(), repo, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -93,7 +97,7 @@ func TestReconcileDisconnected_SameHash(t *testing.T) {
 	}
 
 	// Same hash → no-op
-	if err := ReconcileDisconnectedMetadataBranch(context.Background(), repo); err != nil {
+	if err := ReconcileDisconnectedMetadataBranch(context.Background(), repo, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -134,7 +138,7 @@ func TestReconcileDisconnected_SharedAncestry(t *testing.T) {
 	}
 
 	// Shared ancestry → no-op
-	if err := ReconcileDisconnectedMetadataBranch(context.Background(), repo); err != nil {
+	if err := ReconcileDisconnectedMetadataBranch(context.Background(), repo, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -181,7 +185,7 @@ func TestReconcileDisconnected_Disconnected(t *testing.T) {
 	}
 
 	// Run reconciliation
-	if err := ReconcileDisconnectedMetadataBranch(context.Background(), repo); err != nil {
+	if err := ReconcileDisconnectedMetadataBranch(context.Background(), repo, io.Discard); err != nil {
 		t.Fatalf("ReconcileDisconnectedMetadataBranch() failed: %v", err)
 	}
 
@@ -292,7 +296,7 @@ func TestReconcileDisconnected_MultipleLocalCheckpoints(t *testing.T) {
 	}
 
 	// Run reconciliation
-	if err := ReconcileDisconnectedMetadataBranch(context.Background(), repo); err != nil {
+	if err := ReconcileDisconnectedMetadataBranch(context.Background(), repo, io.Discard); err != nil {
 		t.Fatalf("ReconcileDisconnectedMetadataBranch() failed: %v", err)
 	}
 
@@ -587,7 +591,7 @@ func TestReconcileDisconnected_ModifiedEntries(t *testing.T) {
 		t.Fatalf("failed to open repo: %v", err)
 	}
 
-	if err := ReconcileDisconnectedMetadataBranch(context.Background(), repo); err != nil {
+	if err := ReconcileDisconnectedMetadataBranch(context.Background(), repo, io.Discard); err != nil {
 		t.Fatalf("ReconcileDisconnectedMetadataBranch() failed: %v", err)
 	}
 
@@ -617,4 +621,146 @@ func TestReconcileDisconnected_ModifiedEntries(t *testing.T) {
 	if !strings.Contains(content, `"session_count":2`) {
 		t.Errorf("metadata.json should have session_count:2 (modified value), got: %s", content)
 	}
+}
+
+// TestCollectCommitChain_DepthLimit verifies that collectCommitChain returns an error
+// when the commit chain exceeds MaxCommitTraversalDepth without reaching a root commit.
+func TestCollectCommitChain_DepthLimit(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	repo, err := git.PlainInit(dir, false)
+	require.NoError(t, err)
+
+	// Create an empty tree for all commits.
+	emptyTree := &object.Tree{Entries: []object.TreeEntry{}}
+	treeObj := repo.Storer.NewEncodedObject()
+	require.NoError(t, emptyTree.Encode(treeObj))
+	treeHash, err := repo.Storer.SetEncodedObject(treeObj)
+	require.NoError(t, err)
+
+	// Build a linear chain of MaxCommitTraversalDepth+1 commits (all have parents,
+	// so none is a root). collectCommitChain should bail out at the depth limit.
+	var tip plumbing.Hash
+	for i := range MaxCommitTraversalDepth + 1 {
+		c := &object.Commit{
+			TreeHash:  treeHash,
+			Author:    object.Signature{Name: "test", Email: "test@test.com", When: time.Now().Add(time.Duration(i) * time.Second)},
+			Committer: object.Signature{Name: "test", Email: "test@test.com", When: time.Now().Add(time.Duration(i) * time.Second)},
+			Message:   "commit\n",
+		}
+		if tip != plumbing.ZeroHash {
+			c.ParentHashes = []plumbing.Hash{tip}
+		}
+		obj := repo.Storer.NewEncodedObject()
+		require.NoError(t, c.Encode(obj))
+		h, sErr := repo.Storer.SetEncodedObject(obj)
+		require.NoError(t, sErr)
+		tip = h
+	}
+
+	_, err = collectCommitChain(repo, tip)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeded")
+	assert.Contains(t, err.Error(), "without reaching root")
+}
+
+// TestReconcileDisconnected_AllEmptyOrphans verifies that when all local commits
+// are empty-tree orphan commits (the exact bug artifact), reconciliation resets
+// the local branch to the remote tip without cherry-picking.
+func TestReconcileDisconnected_AllEmptyOrphans(t *testing.T) {
+	t.Parallel()
+
+	bareDir := initBareWithMetadataBranch(t)
+	cloneDir, run := cloneWithConfig(t, bareDir)
+
+	// Create a disconnected local branch with ONLY empty-tree commits
+	// (simulating the empty-orphan bug in a repo that never had real checkpoints)
+	run("checkout", "--orphan", "temp-orphan")
+	run("rm", "-rf", ".")
+	// Commit with empty tree (git allows this with --allow-empty)
+	run("commit", "--allow-empty", "-m", "empty orphan init")
+	run("branch", "-f", paths.MetadataBranchName, "temp-orphan")
+	run("checkout", "main")
+
+	repo, err := git.PlainOpenWithOptions(cloneDir, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
+	require.NoError(t, err)
+
+	// Get remote hash before reconciliation
+	remoteRefName := plumbing.NewRemoteReferenceName("origin", paths.MetadataBranchName)
+	remoteRef, err := repo.Reference(remoteRefName, true)
+	require.NoError(t, err)
+
+	err = ReconcileDisconnectedMetadataBranch(context.Background(), repo, io.Discard)
+	require.NoError(t, err)
+
+	// Local branch should now point to the remote tip (reset, not cherry-picked)
+	refName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
+	localRef, err := repo.Reference(refName, true)
+	require.NoError(t, err)
+
+	assert.Equal(t, remoteRef.Hash(), localRef.Hash(),
+		"local should be reset to remote tip when all local commits are empty orphans")
+}
+
+// TestReconcileDisconnected_CherryPickDeletion verifies that when a local commit
+// deletes a file from its parent, the deletion is correctly propagated during
+// cherry-pick reconciliation.
+func TestReconcileDisconnected_CherryPickDeletion(t *testing.T) {
+	t.Parallel()
+
+	bareDir := initBareWithMetadataBranch(t)
+	cloneDir, run := cloneWithConfig(t, bareDir)
+
+	// Create a disconnected local branch with two commits:
+	// 1. Adds two files
+	// 2. Deletes one of them
+	run("checkout", "--orphan", "temp-orphan")
+	run("rm", "-rf", ".")
+
+	// Commit 1: add two checkpoint files
+	dir1 := filepath.Join(cloneDir, "ab", "cdef012345")
+	require.NoError(t, os.MkdirAll(dir1, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir1, "metadata.json"), []byte(`{"checkpoint_id":"abcdef012345"}`), 0o644))
+
+	dir2 := filepath.Join(cloneDir, "cd", "ef01234567")
+	require.NoError(t, os.MkdirAll(dir2, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir2, "metadata.json"), []byte(`{"checkpoint_id":"cdef01234567"}`), 0o644))
+
+	run("add", ".")
+	run("commit", "-m", "Checkpoint: add two")
+
+	// Commit 2: delete the second checkpoint
+	require.NoError(t, os.RemoveAll(filepath.Join(cloneDir, "cd")))
+	run("add", "-A")
+	run("commit", "-m", "Checkpoint: remove second")
+
+	run("branch", "-f", paths.MetadataBranchName, "temp-orphan")
+	run("checkout", "main")
+
+	repo, err := git.PlainOpenWithOptions(cloneDir, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
+	require.NoError(t, err)
+
+	err = ReconcileDisconnectedMetadataBranch(context.Background(), repo, io.Discard)
+	require.NoError(t, err)
+
+	// Verify merged tree: should have remote data + first local checkpoint,
+	// but NOT the deleted second checkpoint
+	refName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
+	newRef, err := repo.Reference(refName, true)
+	require.NoError(t, err)
+	tipCommit, err := repo.CommitObject(newRef.Hash())
+	require.NoError(t, err)
+	tree, err := tipCommit.Tree()
+	require.NoError(t, err)
+
+	entries := make(map[string]object.TreeEntry)
+	require.NoError(t, checkpoint.FlattenTree(repo, tree, "", entries))
+
+	// Remote data should be present
+	assert.Contains(t, entries, "metadata.json", "remote data should be preserved")
+	// First local checkpoint should be present
+	assert.Contains(t, entries, "ab/cdef012345/metadata.json", "kept checkpoint should be present")
+	// Second local checkpoint should be deleted
+	assert.NotContains(t, entries, "cd/ef01234567/metadata.json", "deleted checkpoint should not be present")
 }
