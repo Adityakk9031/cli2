@@ -1018,7 +1018,7 @@ func initBareWithMetadataBranch(t *testing.T) string {
 		t.Fatalf("failed to write file: %v", err)
 	}
 	run(workDir, "add", ".")
-	run(workDir, "commit", "-m", "init")
+	run(workDir, "commit", "--no-gpg-sign", "-m", "init")
 	run(workDir, "push", "origin", "main")
 
 	// Create orphan entire/checkpoints/v1 with data
@@ -1028,7 +1028,7 @@ func initBareWithMetadataBranch(t *testing.T) string {
 		t.Fatalf("failed to write file: %v", err)
 	}
 	run(workDir, "add", ".")
-	run(workDir, "commit", "-m", "Checkpoint: test123")
+	run(workDir, "commit", "--no-gpg-sign", "-m", "Checkpoint: test123")
 	run(workDir, "push", "origin", paths.MetadataBranchName)
 
 	return bareDir
@@ -1177,6 +1177,7 @@ func cloneWithConfig(t *testing.T, bareDir string) (string, func(args ...string)
 	}
 	run("config", "user.email", "test@test.com")
 	run("config", "user.name", "Test User")
+	run("config", "commit.gpgsign", "false")
 	return cloneDir, run
 }
 
