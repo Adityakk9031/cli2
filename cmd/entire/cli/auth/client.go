@@ -30,6 +30,7 @@ type DeviceAuthStart struct {
 }
 
 type DeviceAuthPoll struct {
+	//nolint:gosec // OAuth token response field name is fixed by the spec.
 	AccessToken string `json:"access_token,omitempty"`
 	TokenType   string `json:"token_type,omitempty"`
 	ExpiresIn   int    `json:"expires_in,omitempty"`

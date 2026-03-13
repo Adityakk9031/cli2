@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os/exec"
 	"runtime"
 	"time"
@@ -15,6 +16,8 @@ import (
 
 const fallbackDeviceAuthPollInterval = time.Second
 const slowDownBackoff = 5 * time.Second
+const maxPollInterval = 30 * time.Second
+const maxExpiresIn = 15 * time.Minute
 
 var browserOpener = openBrowser
 
@@ -82,7 +85,11 @@ func runLogin(ctx context.Context, outW, errW io.Writer, printBrowserURL bool) e
 }
 
 func waitForApproval(ctx context.Context, client *auth.Client, deviceCode string, expiresIn, interval int) (string, error) {
-	deadline := time.Now().Add(time.Duration(expiresIn) * time.Second)
+	expiry := time.Duration(expiresIn) * time.Second
+	if expiry <= 0 || expiry > maxExpiresIn {
+		expiry = maxExpiresIn
+	}
+	deadline := time.Now().Add(expiry)
 	pollInterval := time.Duration(interval) * time.Second
 	if pollInterval <= 0 {
 		pollInterval = fallbackDeviceAuthPollInterval
@@ -103,6 +110,9 @@ func waitForApproval(ctx context.Context, client *auth.Client, deviceCode string
 			// continue below
 		case "slow_down":
 			pollInterval += slowDownBackoff
+			if pollInterval > maxPollInterval {
+				pollInterval = maxPollInterval
+			}
 		case "access_denied":
 			return "", errors.New("device authorization denied")
 		case "expired_token":
@@ -127,6 +137,11 @@ func waitForApproval(ctx context.Context, client *auth.Client, deviceCode string
 }
 
 func openBrowser(ctx context.Context, browserURL string) error {
+	u, err := url.Parse(browserURL)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
+		return fmt.Errorf("refusing to open non-HTTP URL: %s", browserURL)
+	}
+
 	var command string
 	var args []string
 

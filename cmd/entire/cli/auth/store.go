@@ -114,6 +114,11 @@ func (s *Store) save(state *File) error {
 		return fmt.Errorf("write temp auth file: %w", err)
 	}
 
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("sync temp auth file: %w", err)
+	}
+
 	if err := tmpFile.Close(); err != nil {
 		return fmt.Errorf("close temp auth file: %w", err)
 	}
