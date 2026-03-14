@@ -31,10 +31,15 @@ func ResolveURL(path string) (string, error) {
 }
 
 // ResolveURLFromBase joins an API-relative path against an explicit base URL.
+// Only http and https schemes are accepted.
 func ResolveURLFromBase(baseURL, path string) (string, error) {
 	base, err := url.Parse(baseURL)
 	if err != nil {
 		return "", fmt.Errorf("parse base URL: %w", err)
+	}
+
+	if base.Scheme != "http" && base.Scheme != "https" {
+		return "", fmt.Errorf("unsupported base URL scheme %q (must be http or https)", base.Scheme)
 	}
 
 	rel, err := url.Parse(path)

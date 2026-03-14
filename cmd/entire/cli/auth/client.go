@@ -13,7 +13,10 @@ import (
 	apiurl "github.com/entireio/cli/cmd/entire/cli/api"
 )
 
-const maxResponseBytes = 1 << 20
+const (
+	maxResponseBytes = 1 << 20
+	clientID         = "entire-cli"
+)
 
 type Client struct {
 	httpClient *http.Client
@@ -64,7 +67,7 @@ func (c *Client) StartDeviceAuth(ctx context.Context) (*DeviceAuthStart, error) 
 	}
 
 	body := url.Values{}
-	body.Set("client_id", "entire-cli")
+	body.Set("client_id", clientID)
 	body.Set("scope", "cli")
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(body.Encode()))
@@ -102,7 +105,7 @@ func (c *Client) PollDeviceAuth(ctx context.Context, deviceCode string) (*Device
 
 	body := url.Values{}
 	body.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
-	body.Set("client_id", "entire-cli")
+	body.Set("client_id", clientID)
 	body.Set("device_code", deviceCode)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(body.Encode()))
