@@ -72,6 +72,10 @@ func TestLogin_SavesTokenAfterApproval(t *testing.T) {
 		t.Fatalf("device code = %q, want %q", deviceCode, "ABCD-EFGH")
 	}
 
+	if !strings.HasPrefix(approvalURL, server.URL+"/") {
+		t.Fatalf("approval URL = %q, want prefix %q", approvalURL, server.URL+"/")
+	}
+
 	approveReq, reqErr := http.NewRequest(http.MethodPost, approvalURL, http.NoBody)
 	if reqErr != nil {
 		t.Fatalf("create approve request: %v", reqErr)
