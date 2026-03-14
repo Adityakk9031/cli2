@@ -2,9 +2,12 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	apiurl "github.com/entireio/cli/cmd/entire/cli/api"
@@ -44,6 +47,10 @@ func (s *Store) FilePath() string {
 }
 
 func (s *Store) SaveToken(baseURL, token string) error {
+	if strings.TrimSpace(token) == "" {
+		return errors.New("refusing to save empty token")
+	}
+
 	state, err := s.Load()
 	if err != nil {
 		return err
@@ -98,16 +105,12 @@ func (s *Store) save(state *File) error {
 		return fmt.Errorf("create auth directory: %w", err)
 	}
 
-	tmpFile, err := os.CreateTemp(dir, ".auth_tmp_")
+	tmpPath := filepath.Join(dir, ".auth_tmp_"+strconv.FormatInt(time.Now().UnixNano(), 10))
+	tmpFile, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // path is internally constructed from s.filePath
 	if err != nil {
 		return fmt.Errorf("create temp auth file: %w", err)
 	}
 	defer os.Remove(tmpFile.Name())
-
-	if err := tmpFile.Chmod(0o600); err != nil {
-		_ = tmpFile.Close()
-		return fmt.Errorf("set temp auth permissions: %w", err)
-	}
 
 	if _, err := tmpFile.Write(data); err != nil {
 		_ = tmpFile.Close()

@@ -69,6 +69,20 @@ func TestLookupToken(t *testing.T) {
 	}
 }
 
+func TestStoreSaveToken_RejectsEmptyToken(t *testing.T) {
+	t.Parallel()
+
+	store := NewStoreForPath(filepath.Join(t.TempDir(), "auth.json"))
+
+	if err := store.SaveToken("https://entire.io", ""); err == nil {
+		t.Fatal("SaveToken() with empty token should fail")
+	}
+
+	if err := store.SaveToken("https://entire.io", "   "); err == nil {
+		t.Fatal("SaveToken() with whitespace token should fail")
+	}
+}
+
 func TestStoreLoad_IgnoresUnknownFields(t *testing.T) {
 	t.Parallel()
 
