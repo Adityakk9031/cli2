@@ -99,7 +99,7 @@ jobs:
           FACTORY_API_KEY: ${{ secrets.FACTORY_API_KEY }}
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           E2E_CONCURRENT_TEST_LIMIT: ${{ matrix.agent == 'gemini-cli' && '6' || matrix.agent == 'factoryai-droid' && '1' || '' }}
-        run: mise run test:e2e --agent ${{ matrix.agent }}
+        run: mise run test:e2e --agent ${{ matrix.agent }} ${{ matrix.agent == 'roger-roger' && 'TestExternalAgent' || '' }}
 
       - name: Upload artifacts
         if: always()
