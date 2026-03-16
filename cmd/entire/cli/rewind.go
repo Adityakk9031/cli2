@@ -548,6 +548,20 @@ func handleLogsOnlyRewindNonInteractive(ctx context.Context, start *strategy.Man
 		slog.String("session_id", point.SessionID),
 	)
 
+	// Since we are forcing a full checkout in non-interactive mode if the user asks for it
+	// via CLI flags, we should auto-stash any dirty changes to prevent checkout failures.
+	stashed, err := StashIfDirty(ctx)
+	if err != nil {
+		logging.Error(logCtx, "logs-only rewind failed to stash",
+			slog.String("checkpoint_id", point.ID),
+			slog.String("error", err.Error()),
+		)
+		return fmt.Errorf("failed to stash uncommitted changes: %w", err)
+	}
+	if stashed {
+		fmt.Println("Stashed uncommitted changes before rewind. Run 'git stash pop' to recover.")
+	}
+
 	sessions, err := start.RestoreLogsOnly(ctx, point, true) // force=true for explicit rewind
 	if err != nil {
 		logging.Error(logCtx, "logs-only rewind failed",
@@ -882,7 +896,7 @@ func handleLogsOnlyCheckout(ctx context.Context, start *strategy.ManualCommitStr
 		huh.NewGroup(
 			huh.NewConfirm().
 				Title("Create detached HEAD?").
-				Description("This will checkout the commit directly. You'll be in 'detached HEAD' state.\nAny uncommitted changes will be lost!").
+				Description("This will checkout the commit directly. You'll be in 'detached HEAD' state.\nAny uncommitted changes will be stashed (recoverable).").
 				Value(&confirm),
 		),
 	)
@@ -895,6 +909,19 @@ func handleLogsOnlyCheckout(ctx context.Context, start *strategy.ManualCommitStr
 		fmt.Println("Checkout cancelled. Session logs were still restored.")
 		printMultiSessionResumeCommands(sessions)
 		return nil
+	}
+
+	// Stash uncommitted changes before checkout to avoid git failure
+	stashed, err := StashIfDirty(ctx)
+	if err != nil {
+		logging.Error(logCtx, "logs-only checkout failed to stash",
+			slog.String("checkpoint_id", point.ID),
+			slog.String("error", err.Error()),
+		)
+		return fmt.Errorf("failed to stash uncommitted changes: %w", err)
+	}
+	if stashed {
+		fmt.Println("Stashed uncommitted changes before checkout. Run 'git stash pop' to recover.")
 	}
 
 	// Perform git checkout

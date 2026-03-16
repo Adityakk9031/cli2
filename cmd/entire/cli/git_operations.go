@@ -229,6 +229,27 @@ func HasUncommittedChanges(ctx context.Context) (bool, error) {
 	return len(strings.TrimSpace(string(output))) > 0, nil
 }
 
+// StashIfDirty checks for uncommitted changes and stashes them if present.
+// Returns true if a stash was created (changes were stashed), false if the
+// working directory was clean. The caller should inform the user that they
+// can recover stashed changes with `git stash pop`.
+func StashIfDirty(ctx context.Context) (bool, error) {
+	dirty, err := HasUncommittedChanges(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to check for uncommitted changes: %w", err)
+	}
+	if !dirty {
+		return false, nil
+	}
+
+	cmd := exec.CommandContext(ctx, "git", "stash", "--include-untracked", "-m", "entire rewind: auto-stashed before checkout")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return false, fmt.Errorf("failed to stash changes: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+
+	return true, nil
+}
+
 // findNewUntrackedFiles finds files that are newly untracked (not in pre-existing list)
 func findNewUntrackedFiles(current, preExisting []string) []string {
 	preExistingSet := make(map[string]bool)
