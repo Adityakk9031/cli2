@@ -10,11 +10,9 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
+	"github.com/entireio/cli/cmd/entire/cli/trail"
 
 	"github.com/go-git/go-git/v6"
-	"github.com/go-git/go-git/v6/plumbing"
-	"github.com/go-git/go-git/v6/plumbing/filemode"
-	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
 // =============================================================================
@@ -76,12 +74,7 @@ func TestPrePush_PushesCheckpointBranchToOrigin(t *testing.T) {
 
 // TestPrePush_PushesTrailsBranchWhenPresent verifies that PrePush pushes
 // the entire/trails/v1 branch to the bare remote when it exists locally.
-//
-// Trails are only created when a trail is explicitly started (via "trail start")
-// and a checkpoint is linked to it. The basic session + commit flow does not
-// always create a trails branch. This test verifies the push mechanism works
-// when the branch IS present: we manually create the branch and then assert
-// it arrives on the remote.
+// A real trail is created via trail.Store to exercise the production code path.
 func TestPrePush_PushesTrailsBranchWhenPresent(t *testing.T) {
 	t.Parallel()
 	env := NewFeatureBranchEnv(t)
@@ -91,9 +84,8 @@ func TestPrePush_PushesTrailsBranchWhenPresent(t *testing.T) {
 	// Create a session, checkpoint, and commit
 	_ = createCheckpointedCommit(t, env, "Add feature", "feature.go", "package feature", "Add feature")
 
-	// If the trails branch exists locally (some configurations create it), verify it pushes.
-	// If not, create a minimal orphan trails branch to test the push mechanism.
-	ensureTrailsBranchExists(t, env)
+	// Create a real trail for the current branch so we can verify it pushes.
+	createTrailForCurrentBranch(t, env)
 
 	// Run PrePush
 	env.RunPrePush("origin")
@@ -193,45 +185,23 @@ func TestPrePush_PushDisabledSkipsCheckpoints(t *testing.T) {
 	})
 
 	// Create session, checkpoint, and commit
-	session := env.NewSession()
-	transcriptPath := session.CreateTranscript("Some work", []FileChange{
-		{Path: "work.go", Content: "package work"},
-	})
-
-	if err := env.SimulateUserPromptSubmitWithPromptAndTranscriptPath(session.ID, "Some work", transcriptPath); err != nil {
-		t.Fatalf("SimulateUserPromptSubmit failed: %v", err)
-	}
-
-	env.WriteFile("work.go", "package work")
-	env.GitAdd("work.go")
-
-	if err := env.SimulateStop(session.ID, transcriptPath); err != nil {
-		t.Fatalf("SimulateStop failed: %v", err)
-	}
-
-	env.GitCommitWithShadowHooks("Some work", "work.go")
+	_ = createCheckpointedCommit(t, env, "Some work", "work.go", "package work", "Some work")
 
 	// Verify checkpoint was created locally
 	if !env.BranchExists(paths.MetadataBranchName) {
 		t.Fatal("should have local checkpoint branch after condensation")
 	}
 
-	// Run PrePush
+	// Create a real trail so we can assert it pushes independently of checkpoints
+	createTrailForCurrentBranch(t, env)
+
+	// Single PrePush — should push trails but skip checkpoints
 	env.RunPrePush("origin")
 
 	// Checkpoints should NOT be on remote
 	if env.BranchExistsOnRemote(bareDir, paths.MetadataBranchName) {
 		t.Error("entire/checkpoints/v1 should NOT be on remote when push_sessions is false")
 	}
-
-	// Guarantee the trails branch exists so we can make an unconditional assertion.
-	// Trails are only created when a trail is explicitly started, not by the basic
-	// session + commit flow. Create one if needed to verify push_sessions: false
-	// does not affect trails.
-	ensureTrailsBranchExists(t, env)
-
-	// Re-run PrePush to push the trails branch
-	env.RunPrePush("origin")
 
 	// Trails SHOULD be on remote (trails are independent of push_sessions)
 	if !env.BranchExistsOnRemote(bareDir, paths.TrailsBranchName) {
@@ -276,8 +246,8 @@ func TestPrePush_CheckpointRemoteRoutesToSeparateRemote(t *testing.T) {
 	// returns a checkpointURL: checkpoints go to ps.pushTarget(), trails go to ps.remote.
 	env.GitPush(bareCheckpoint, paths.MetadataBranchName)
 
-	// Ensure trails branch exists for a definitive assertion.
-	ensureTrailsBranchExists(t, env)
+	// Create a real trail and push it to origin.
+	createTrailForCurrentBranch(t, env)
 	env.GitPush("origin", paths.TrailsBranchName)
 
 	// Checkpoints should be on checkpoint remote, NOT on origin
@@ -643,8 +613,8 @@ func TestGracefulDegradation_UnreachableCheckpointRemotePushContinues(t *testing
 		t.Fatal("should have local checkpoint branch after condensation")
 	}
 
-	// Ensure trails branch exists so we can verify it pushes independently.
-	ensureTrailsBranchExists(t, env)
+	// Create a real trail so we can verify it pushes independently.
+	createTrailForCurrentBranch(t, env)
 
 	// Run PrePush with checkpoint_remote configured. Since origin is a local path,
 	// resolvePushSettings will fail to derive a checkpoint URL and fall back to
@@ -724,90 +694,42 @@ func TestGracefulDegradation_UnreachableCheckpointRemoteOnCloneIsSilent(t *testi
 // Helpers
 // =============================================================================
 
-// ensureTrailsBranchExists creates the trails branch if it doesn't already exist.
-// This is used in tests that need to make unconditional assertions about trails
-// being pushed, since the basic session + commit flow does not always create trails.
-func ensureTrailsBranchExists(t *testing.T, env *TestEnv) {
-	t.Helper()
-	if !env.BranchExists(paths.TrailsBranchName) {
-		createOrphanBranch(t, env.RepoDir, paths.TrailsBranchName, "trails.json", `{"test": true}`)
-	}
-}
-
-// createOrphanBranch creates a minimal orphan branch with a single file using
-// go-git plumbing APIs. This avoids switching the working tree (which would
-// conflict with other files and the test binary).
-func createOrphanBranch(t *testing.T, repoDir, branchName, fileName, content string) {
+// createTrailForCurrentBranch creates a real trail via the trail.Store for the
+// current branch, writing proper trail metadata through the production code path.
+func createTrailForCurrentBranch(t *testing.T, env *TestEnv) {
 	t.Helper()
 
-	repo, err := git.PlainOpen(repoDir)
+	repo, err := git.PlainOpen(env.RepoDir)
 	if err != nil {
 		t.Fatalf("failed to open repo: %v", err)
 	}
 
-	// Create a blob for the file content
-	blobObj := repo.Storer.NewEncodedObject()
-	blobObj.SetType(plumbing.BlobObject)
-	w, err := blobObj.Writer()
+	trailID, err := trail.GenerateID()
 	if err != nil {
-		t.Fatalf("failed to create blob writer: %v", err)
-	}
-	if _, err := w.Write([]byte(content)); err != nil {
-		t.Fatalf("failed to write blob: %v", err)
-	}
-	if err := w.Close(); err != nil {
-		t.Fatalf("failed to close blob writer: %v", err)
-	}
-	blobHash, err := repo.Storer.SetEncodedObject(blobObj)
-	if err != nil {
-		t.Fatalf("failed to store blob: %v", err)
+		t.Fatalf("failed to generate trail ID: %v", err)
 	}
 
-	// Create a tree with the single file
-	tree := &object.Tree{
-		Entries: []object.TreeEntry{
-			{
-				Name: fileName,
-				Mode: filemode.Regular,
-				Hash: blobHash,
-			},
-		},
-	}
-	treeObj := repo.Storer.NewEncodedObject()
-	if err := tree.Encode(treeObj); err != nil {
-		t.Fatalf("failed to encode tree: %v", err)
-	}
-	treeHash, err := repo.Storer.SetEncodedObject(treeObj)
-	if err != nil {
-		t.Fatalf("failed to store tree: %v", err)
-	}
-
-	// Create a root commit (no parents = orphan)
 	now := time.Now()
-	sig := object.Signature{
-		Name:  "Test User",
-		Email: "test@example.com",
-		When:  now,
-	}
-	commit := &object.Commit{
-		TreeHash:  treeHash,
-		Author:    sig,
-		Committer: sig,
-		Message:   "init " + branchName,
-	}
-	commitObj := repo.Storer.NewEncodedObject()
-	if err := commit.Encode(commitObj); err != nil {
-		t.Fatalf("failed to encode commit: %v", err)
-	}
-	commitHash, err := repo.Storer.SetEncodedObject(commitObj)
-	if err != nil {
-		t.Fatalf("failed to store commit: %v", err)
+	metadata := &trail.Metadata{
+		TrailID:   trailID,
+		Branch:    env.GetCurrentBranch(),
+		Base:      "main",
+		Title:     "Test trail",
+		Status:    trail.StatusDraft,
+		Author:    "test",
+		Assignees: []string{},
+		Labels:    []string{},
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
-	// Create the branch reference
-	ref := plumbing.NewHashReference(plumbing.NewBranchReferenceName(branchName), commitHash)
-	if err := repo.Storer.SetReference(ref); err != nil {
-		t.Fatalf("failed to create branch ref %s: %v", branchName, err)
+	store := trail.NewStore(repo)
+	if err := store.Write(metadata, nil, nil); err != nil {
+		t.Fatalf("failed to write trail: %v", err)
+	}
+
+	if !env.BranchExists(paths.TrailsBranchName) {
+		t.Fatal("trails branch should exist after writing trail")
 	}
 }
 
