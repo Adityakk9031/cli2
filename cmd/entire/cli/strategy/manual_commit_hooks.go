@@ -630,9 +630,11 @@ type postCommitActionHandler struct {
 	parentTree *object.Tree        // HEAD's first parent tree (shared, nil for initial commits)
 	shadowRef  *plumbing.Reference // Per-session shadow branch ref (nil if branch doesn't exist)
 	shadowTree *object.Tree        // Per-session shadow commit tree (nil if branch doesn't exist)
+	parentCommitHash string        // HEAD's first parent commit hash
 
 	// Output: set by handler methods, read by caller after TransitionAndLog.
 	condensed bool
+	commitAlreadyCondensed *bool
 }
 
 func (h *postCommitActionHandler) HandleCondense(state *session.State) error {
@@ -648,12 +650,23 @@ func (h *postCommitActionHandler) HandleCondense(state *session.State) error {
 	)
 
 	if shouldCondense {
-		h.condensed = h.s.condenseAndUpdateState(h.ctx, h.repo, h.checkpointID, state, h.head, h.shadowBranchName, h.shadowBranchesToDelete, h.committedFileSet, condenseOpts{
-			shadowRef:      h.shadowRef,
-			headTree:       h.headTree,
-			repoDir:        h.repoDir,
-			headCommitHash: h.newHead,
-		})
+		if *h.commitAlreadyCondensed {
+			logging.Debug(logCtx, "post-commit: skipping condensation, another session already condensed this commit",
+				slog.String("session_id", state.SessionID))
+			h.s.updateBaseCommitIfChanged(h.ctx, state, h.newHead)
+		} else {
+			h.condensed = h.s.condenseAndUpdateState(h.ctx, h.repo, h.checkpointID, state, h.head, h.shadowBranchName, h.shadowBranchesToDelete, h.committedFileSet, condenseOpts{
+				shadowRef:      h.shadowRef,
+				headTree:       h.headTree,
+				parentTree:     h.parentTree,
+				repoDir:        h.repoDir,
+				headCommitHash: h.newHead,
+				parentCommitHash: h.parentCommitHash,
+			})
+			if h.condensed {
+				*h.commitAlreadyCondensed = true
+			}
+		}
 	} else {
 		h.s.updateBaseCommitIfChanged(h.ctx, state, h.newHead)
 	}
@@ -674,12 +687,23 @@ func (h *postCommitActionHandler) HandleCondenseIfFilesTouched(state *session.St
 	)
 
 	if shouldCondense {
-		h.condensed = h.s.condenseAndUpdateState(h.ctx, h.repo, h.checkpointID, state, h.head, h.shadowBranchName, h.shadowBranchesToDelete, h.committedFileSet, condenseOpts{
-			shadowRef:      h.shadowRef,
-			headTree:       h.headTree,
-			repoDir:        h.repoDir,
-			headCommitHash: h.newHead,
-		})
+		if *h.commitAlreadyCondensed {
+			logging.Debug(logCtx, "post-commit: skipping condensation, another session already condensed this commit",
+				slog.String("session_id", state.SessionID))
+			h.s.updateBaseCommitIfChanged(h.ctx, state, h.newHead)
+		} else {
+			h.condensed = h.s.condenseAndUpdateState(h.ctx, h.repo, h.checkpointID, state, h.head, h.shadowBranchName, h.shadowBranchesToDelete, h.committedFileSet, condenseOpts{
+				shadowRef:      h.shadowRef,
+				headTree:       h.headTree,
+				parentTree:     h.parentTree,
+				repoDir:        h.repoDir,
+				headCommitHash: h.newHead,
+				parentCommitHash: h.parentCommitHash,
+			})
+			if h.condensed {
+				*h.commitAlreadyCondensed = true
+			}
+		}
 	} else {
 		h.s.updateBaseCommitIfChanged(h.ctx, state, h.newHead)
 	}
@@ -846,7 +870,9 @@ func (s *ManualCommitStrategy) PostCommit(ctx context.Context) error { //nolint:
 		headTree = t
 	}
 	var parentTree *object.Tree
+	var parentCommitHash string
 	if commit.NumParents() > 0 {
+		parentCommitHash = commit.ParentHashes[0].String()
 		if parent, err := commit.Parent(0); err == nil {
 			if t, err := parent.Tree(); err == nil {
 				parentTree = t
@@ -857,6 +883,22 @@ func (s *ManualCommitStrategy) PostCommit(ctx context.Context) error { //nolint:
 	committedFileSet := filesChangedInCommit(ctx, worktreePath, commit, headTree, parentTree)
 	resolveTreesSpan.End()
 
+	// Track if any active session condensed this commit
+	commitAlreadyCondensed := false
+
+	// Sort sessions so ACTIVE sessions are processed first. This prevents Bug 3 (double condensation)
+	// where an ENDED session claims a commit, gets 0-attribution, and is then overwritten by the ACTIVE session,
+	// or vice versa. By processing ACTIVE first, it claims the commit and we can skip others.
+	slices.SortFunc(sessions, func(a, b *SessionState) int {
+		if a.Phase.IsActive() && !b.Phase.IsActive() {
+			return -1
+		}
+		if !a.Phase.IsActive() && b.Phase.IsActive() {
+			return 1
+		}
+		return 0
+	})
+
 	for _, state := range sessions {
 		// Skip fully-condensed ended sessions — no work remains.
 		// These sessions only persist for LastCheckpointID (amend trailer reuse).
@@ -864,8 +906,8 @@ func (s *ManualCommitStrategy) PostCommit(ctx context.Context) error { //nolint:
 			continue
 		}
 		s.postCommitProcessSession(ctx, repo, state, &transitionCtx, checkpointID,
-			head, commit, newHead, worktreePath, headTree, parentTree, committedFileSet,
-			shadowBranchesToDelete, uncondensedActiveOnBranch)
+			head, commit, newHead, worktreePath, headTree, parentTree, parentCommitHash, committedFileSet,
+			shadowBranchesToDelete, uncondensedActiveOnBranch, &commitAlreadyCondensed)
 	}
 
 	// Clean up shadow branches — only delete when ALL sessions on the branch are non-active
@@ -908,9 +950,11 @@ func (s *ManualCommitStrategy) postCommitProcessSession(
 	newHead string,
 	repoDir string,
 	headTree, parentTree *object.Tree,
+	parentCommitHash string,
 	committedFileSet map[string]struct{},
 	shadowBranchesToDelete map[string]struct{},
 	uncondensedActiveOnBranch map[string]bool,
+	commitAlreadyCondensed *bool,
 ) {
 	logCtx := logging.WithComponent(ctx, "checkpoint")
 	shadowBranchName := getShadowBranchNameForCommit(state.BaseCommit, state.WorktreeID)
@@ -1001,6 +1045,8 @@ func (s *ManualCommitStrategy) postCommitProcessSession(
 		parentTree:             parentTree,
 		shadowRef:              shadowRef,
 		shadowTree:             shadowTree,
+		parentCommitHash:       parentCommitHash,
+		commitAlreadyCondensed: commitAlreadyCondensed,
 	}
 
 	if err := TransitionAndLog(ctx, state, session.EventGitCommit, *transitionCtx, handler); err != nil {

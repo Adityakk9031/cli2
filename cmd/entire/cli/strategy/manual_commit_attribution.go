@@ -191,10 +191,11 @@ func CalculateAttributionWithAccumulated(
 	baseTree *object.Tree,
 	shadowTree *object.Tree,
 	headTree *object.Tree,
+	parentTree *object.Tree,
 	filesTouched []string,
 	promptAttributions []PromptAttribution,
 	repoDir string,
-	attributionBaseCommit string,
+	parentCommitHash string,
 	headCommitHash string,
 ) *checkpoint.InitialAttribution {
 	if len(filesTouched) == 0 {
@@ -243,8 +244,9 @@ func CalculateAttributionWithAccumulated(
 	}
 
 	// Calculate total user edits to non-agent files (files not in filesTouched)
-	// These files are not in the shadow tree, so base→head captures ALL their user edits
-	allChangedFiles, err := getAllChangedFiles(ctx, baseTree, headTree, repoDir, attributionBaseCommit, headCommitHash)
+	// These files are not in the shadow tree, so parent→head captures ALL their user edits
+	// This avoids inflating user edits when intermediate commits exist (Bug #421).
+	allChangedFiles, err := getAllChangedFiles(ctx, parentTree, headTree, repoDir, parentCommitHash, headCommitHash)
 	if err != nil {
 		logging.Warn(logging.WithComponent(ctx, "attribution"),
 			"attribution: failed to enumerate changed files",
@@ -258,9 +260,9 @@ func CalculateAttributionWithAccumulated(
 			continue // Skip agent-touched files
 		}
 
-		baseContent := getFileContent(baseTree, filePath)
+		parentContent := getFileContent(parentTree, filePath)
 		headContent := getFileContent(headTree, filePath)
-		_, userAdded, _ := diffLines(baseContent, headContent)
+		_, userAdded, _ := diffLines(parentContent, headContent)
 		allUserEditsToNonAgentFiles += userAdded
 	}
 

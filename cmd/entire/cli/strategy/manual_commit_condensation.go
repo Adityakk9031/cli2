@@ -89,8 +89,10 @@ func (s *ManualCommitStrategy) getCheckpointLog(ctx context.Context, checkpointI
 type condenseOpts struct {
 	shadowRef      *plumbing.Reference // Pre-resolved shadow branch ref (nil = resolve from repo)
 	headTree       *object.Tree        // Pre-resolved HEAD tree (passed through to calculateSessionAttributions)
+	parentTree     *object.Tree        // Pre-resolved parent tree
 	repoDir        string              // Repository worktree path for git CLI commands
 	headCommitHash string              // HEAD commit hash (passed through for attribution)
+	parentCommitHash string            // parent commit hash
 }
 
 // CondenseSession condenses a session's shadow branch to permanent storage.
@@ -193,9 +195,11 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 
 	attribution := calculateSessionAttributions(ctx, repo, ref, sessionData, state, attributionOpts{
 		headTree:              o.headTree,
+		parentTree:            o.parentTree,
 		repoDir:               o.repoDir,
 		attributionBaseCommit: attrBase,
 		headCommitHash:        o.headCommitHash,
+		parentCommitHash:      o.parentCommitHash,
 	})
 
 	// Get current branch name
@@ -296,9 +300,11 @@ func buildSessionMetrics(state *SessionState) *cpkg.SessionMetrics {
 type attributionOpts struct {
 	headTree              *object.Tree // HEAD commit tree (already resolved by PostCommit)
 	shadowTree            *object.Tree // Shadow branch tree (already resolved by PostCommit)
+	parentTree            *object.Tree // Pre-resolved parent tree
 	repoDir               string       // Repository worktree path for git CLI commands
 	attributionBaseCommit string       // Base commit hash for non-agent file detection (empty = fall back to go-git tree walk)
 	headCommitHash        string       // HEAD commit hash for non-agent file detection (empty = fall back to go-git tree walk)
+	parentCommitHash      string       // Parent commit hash
 }
 
 func calculateSessionAttributions(ctx context.Context, repo *git.Repository, shadowRef *plumbing.Reference, sessionData *ExtractedSessionData, state *SessionState, opts ...attributionOpts) *cpkg.InitialAttribution {
@@ -405,10 +411,11 @@ func calculateSessionAttributions(ctx context.Context, repo *git.Repository, sha
 		baseTree,
 		shadowTree,
 		headTree,
+		o.parentTree,
 		sessionData.FilesTouched,
 		state.PromptAttributions,
 		o.repoDir,
-		o.attributionBaseCommit,
+		o.parentCommitHash,
 		o.headCommitHash,
 	)
 
