@@ -115,6 +115,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
+      RUN_URL: ${{ needs.matrix-setup.outputs.run_url }}
+      E2E_AGENT: ${{ matrix.agent }}
       SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
       SLACK_CHANNEL: ${{ needs.matrix-setup.outputs.slack_channel }}
       SLACK_THREAD_TS: ${{ needs.matrix-setup.outputs.slack_thread_ts }}
@@ -123,39 +125,45 @@ jobs:
       matrix:
         agent: ${{ fromJson(needs.matrix-setup.outputs.agents) }}
     steps:
-      - name: Post triage started
+      - name: Write Slack helper
         if: ${{ env.SLACK_BOT_TOKEN != '' && env.SLACK_CHANNEL != '' && env.SLACK_THREAD_TS != '' }}
         shell: bash
-        env:
-          RUN_URL: ${{ needs.matrix-setup.outputs.run_url }}
-          E2E_AGENT: ${{ matrix.agent }}
         run: |
           set -euo pipefail
 
-          post_slack_message() {
-            local text="$1"
-            local payload response
+          helper="$RUNNER_TEMP/post-slack-message.sh"
+          cat > "$helper" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
 
-            payload="$(jq -n \
-              --arg channel "$SLACK_CHANNEL" \
-              --arg thread_ts "$SLACK_THREAD_TS" \
-              --arg text "$text" \
-              '{channel: $channel, thread_ts: $thread_ts, text: $text}')"
+          text="${1:?message is required}"
+          payload="$(jq -n \
+            --arg channel "$SLACK_CHANNEL" \
+            --arg thread_ts "$SLACK_THREAD_TS" \
+            --arg text "$text" \
+            '{channel: $channel, thread_ts: $thread_ts, text: $text}')"
 
-            if ! response="$(curl -fsS https://slack.com/api/chat.postMessage \
-              -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
-              -H 'Content-type: application/json; charset=utf-8' \
-              --data "$payload")"; then
-              echo "warning: slack start notification failed" >&2
-              return 0
-            fi
+          if ! response="$(curl -fsS https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
+            -H 'Content-type: application/json; charset=utf-8' \
+            --data "$payload")"; then
+            echo "warning: slack notification failed" >&2
+            exit 0
+          fi
 
-            if ! jq -e '.ok == true' >/dev/null <<<"$response"; then
-              echo "warning: slack start notification returned non-ok response" >&2
-            fi
-          }
+          if ! jq -e '.ok == true' >/dev/null <<<"$response"; then
+            echo "warning: slack notification returned non-ok response" >&2
+          fi
+          EOF
+          chmod +x "$helper"
 
-          post_slack_message "Starting E2E triage for \`$E2E_AGENT\` on <$RUN_URL|this run>."
+      - name: Post triage started
+        if: ${{ env.SLACK_BOT_TOKEN != '' && env.SLACK_CHANNEL != '' && env.SLACK_THREAD_TS != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          "$RUNNER_TEMP/post-slack-message.sh" "Starting E2E triage for \`$E2E_AGENT\` on <$RUN_URL|this run>."
 
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -176,8 +184,6 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GH_TOKEN: ${{ github.token }}
-          RUN_URL: ${{ needs.matrix-setup.outputs.run_url }}
-          E2E_AGENT: ${{ matrix.agent }}
           TRIAGE_OUTPUT_FILE: ${{ github.workspace }}/e2e-triage-artifacts/${{ matrix.agent }}/triage.log
         run: scripts/run-e2e-triage.sh
 
@@ -213,81 +219,25 @@ jobs:
             echo EOF
           } >> "$GITHUB_OUTPUT"
 
-      - name: Post triage success
-        if: ${{ always() && steps.triage.outcome == 'success' && env.SLACK_BOT_TOKEN != '' && env.SLACK_CHANNEL != '' && env.SLACK_THREAD_TS != '' }}
+      - name: Post triage completion
+        if: ${{ always() && (steps.triage.outcome == 'success' || steps.triage.outcome == 'failure') && env.SLACK_BOT_TOKEN != '' && env.SLACK_CHANNEL != '' && env.SLACK_THREAD_TS != '' }}
         shell: bash
         env:
+          TRIAGE_OUTCOME: ${{ steps.triage.outcome }}
           TRIAGE_SUMMARY: ${{ steps.summary.outputs.summary }}
         run: |
           set -euo pipefail
 
-          post_slack_message() {
-            local text="$1"
-            local payload response
-
-            payload="$(jq -n \
-              --arg channel "$SLACK_CHANNEL" \
-              --arg thread_ts "$SLACK_THREAD_TS" \
-              --arg text "$text" \
-              '{channel: $channel, thread_ts: $thread_ts, text: $text}')"
-
-            if ! response="$(curl -fsS https://slack.com/api/chat.postMessage \
-              -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
-              -H 'Content-type: application/json; charset=utf-8' \
-              --data "$payload")"; then
-              echo "warning: slack success notification failed" >&2
-              return 0
-            fi
-
-            if ! jq -e '.ok == true' >/dev/null <<<"$response"; then
-              echo "warning: slack success notification returned non-ok response" >&2
-            fi
-          }
-
-          message="E2E triage complete for \`$E2E_AGENT\`."
+          if [ "$TRIAGE_OUTCOME" = "success" ]; then
+            message="E2E triage complete for \`$E2E_AGENT\`."
+          else
+            message="E2E triage failed for \`$E2E_AGENT\`."
+          fi
           if [ -n "$TRIAGE_SUMMARY" ]; then
             message="$message $TRIAGE_SUMMARY"
           fi
 
-          post_slack_message "$message"
-
-      - name: Post triage failure
-        if: ${{ always() && steps.triage.outcome == 'failure' && env.SLACK_BOT_TOKEN != '' && env.SLACK_CHANNEL != '' && env.SLACK_THREAD_TS != '' }}
-        shell: bash
-        env:
-          TRIAGE_SUMMARY: ${{ steps.summary.outputs.summary }}
-        run: |
-          set -euo pipefail
-
-          post_slack_message() {
-            local text="$1"
-            local payload response
-
-            payload="$(jq -n \
-              --arg channel "$SLACK_CHANNEL" \
-              --arg thread_ts "$SLACK_THREAD_TS" \
-              --arg text "$text" \
-              '{channel: $channel, thread_ts: $thread_ts, text: $text}')"
-
-            if ! response="$(curl -fsS https://slack.com/api/chat.postMessage \
-              -H "Authorization: Bearer ${SLACK_BOT_TOKEN}" \
-              -H 'Content-type: application/json; charset=utf-8' \
-              --data "$payload")"; then
-              echo "warning: slack failure notification failed" >&2
-              return 0
-            fi
-
-            if ! jq -e '.ok == true' >/dev/null <<<"$response"; then
-              echo "warning: slack failure notification returned non-ok response" >&2
-            fi
-          }
-
-          message="E2E triage failed for \`$E2E_AGENT\`."
-          if [ -n "$TRIAGE_SUMMARY" ]; then
-            message="$message $TRIAGE_SUMMARY"
-          fi
-
-          post_slack_message "$message"
+          "$RUNNER_TEMP/post-slack-message.sh" "$message"
 
       - name: Upload triage output
         if: always()
