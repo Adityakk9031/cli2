@@ -13,7 +13,7 @@ This repo contains the CLI for Entire.
 - `entire/`: Main CLI entry point
 - `entire/cli`: CLI utilities and helpers
 - `entire/cli/commands`: actual command implementations
-- `entire/cli/agent`: agent implementations (Claude Code, Gemini CLI, OpenCode, Cursor, Factory AI Droid) - see [Agent Integration Checklist](docs/architecture/agent-integration-checklist.md) and [Agent Implementation Guide](docs/architecture/agent-guide.md)
+- `entire/cli/agent`: agent implementations (Claude Code, Gemini CLI, OpenCode, Cursor, Factory AI Droid, Copilot CLI) - see [Agent Integration Checklist](docs/architecture/agent-integration-checklist.md) and [Agent Implementation Guide](docs/architecture/agent-guide.md)
 - `entire/cli/strategy`: strategy implementation (manual-commit) - see section below
 - `entire/cli/checkpoint`: checkpoint storage abstractions (temporary and committed)
 - `entire/cli/session`: session state management
@@ -62,6 +62,7 @@ mise run test:e2e:canary TestFoo   # Run a specific test
 - **If a canary test fails, the bug is in the CLI or test infrastructure**, not in an agent
 - Located in `e2e/vogon/` (binary) and `cmd/entire/cli/agent/vogon/` (Agent interface)
 - The binary parses prompts via regex, creates/modifies/deletes files, and fires lifecycle hooks
+- **IMPORTANT: When changing E2E test prompt wording**, the Vogon binary (`e2e/vogon/main.go`) parses prompts with hardcoded regexes. New phrasing may not match existing patterns — always run `mise run test:e2e:canary` after changing prompt text and fix Vogon's parsing if tests fail.
 
 ### Running E2E Tests (Only When Explicitly Requested)
 
@@ -74,6 +75,7 @@ mise run test:e2e --agent gemini-cli [filter]        # Gemini CLI only
 mise run test:e2e --agent opencode [filter]          # OpenCode only
 mise run test:e2e --agent cursor [filter]            # Cursor only
 mise run test:e2e --agent factoryai-droid [filter]   # Factory AI Droid only
+mise run test:e2e --agent copilot-cli [filter]       # Copilot CLI only
 ```
 
 E2E tests:
@@ -81,9 +83,9 @@ E2E tests:
 - Use the `//go:build e2e` build tag
 - Located in `e2e/tests/`
 - See [`e2e/README.md`](e2e/README.md) for full documentation (structure, debugging, adding agents)
-- Test real agent interactions (Claude Code, Gemini CLI, OpenCode, Cursor, Factory AI Droid, or Vogon creating files, committing, etc.)
+- Test real agent interactions (Claude Code, Gemini CLI, OpenCode, Cursor, Factory AI Droid, Copilot CLI, or Vogon creating files, committing, etc.)
 - Validate checkpoint scenarios documented in `docs/architecture/checkpoint-scenarios.md`
-- Support multiple agents via `E2E_AGENT` env var (`claude-code`, `gemini`, `opencode`, `cursor`, `factoryai-droid`, `vogon`)
+- Support multiple agents via `E2E_AGENT` env var (`claude-code`, `gemini`, `opencode`, `cursor`, `factoryai-droid`, `copilot-cli`, `vogon`)
 
 **Environment variables:**
 

@@ -12,9 +12,9 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/testutil"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
 func TestOpenRepository(t *testing.T) {
@@ -1014,6 +1014,7 @@ func initBareWithMetadataBranch(t *testing.T) string {
 	run(workDir, "clone", bareDir, ".")
 	run(workDir, "config", "user.email", "test@test.com")
 	run(workDir, "config", "user.name", "Test User")
+	run(workDir, "config", "commit.gpgsign", "false")
 	if err := os.WriteFile(filepath.Join(workDir, "README.md"), []byte("# Test"), 0o644); err != nil {
 		t.Fatalf("failed to write file: %v", err)
 	}
@@ -1045,7 +1046,7 @@ func TestEnsureMetadataBranch(t *testing.T) {
 			t.Fatalf("clone failed: %v\n%s", err, out)
 		}
 
-		repo, err := git.PlainOpenWithOptions(cloneDir, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
+		repo, err := git.PlainOpen(cloneDir)
 		if err != nil {
 			t.Fatalf("failed to open repo: %v", err)
 		}
@@ -1081,7 +1082,7 @@ func TestEnsureMetadataBranch(t *testing.T) {
 			t.Fatalf("clone failed: %v\n%s", err, out)
 		}
 
-		repo, err := git.PlainOpenWithOptions(cloneDir, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
+		repo, err := git.PlainOpen(cloneDir)
 		if err != nil {
 			t.Fatalf("failed to open repo: %v", err)
 		}
@@ -1177,6 +1178,7 @@ func cloneWithConfig(t *testing.T, bareDir string) (string, func(args ...string)
 	}
 	run("config", "user.email", "test@test.com")
 	run("config", "user.name", "Test User")
+	run("config", "commit.gpgsign", "false")
 	return cloneDir, run
 }
 
@@ -1203,7 +1205,7 @@ func TestEnsureMetadataBranch_DisconnectedBranchesNotReconciledInEnable(t *testi
 	run("commit", "-m", "Checkpoint: abcdef012345")
 	run("branch", "-f", paths.MetadataBranchName, "temp-orphan")
 
-	repo, err := git.PlainOpenWithOptions(cloneDir, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
+	repo, err := git.PlainOpen(cloneDir)
 	if err != nil {
 		t.Fatalf("failed to open repo: %v", err)
 	}
@@ -1238,7 +1240,7 @@ func TestEnsureMetadataBranch_DoesNotFastForwardWhenBehind(t *testing.T) {
 	cloneDir, run := cloneWithConfig(t, bareDir)
 
 	// Create local branch from remote (normal state)
-	repo, err := git.PlainOpenWithOptions(cloneDir, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
+	repo, err := git.PlainOpen(cloneDir)
 	if err != nil {
 		t.Fatalf("failed to open repo: %v", err)
 	}
@@ -1277,7 +1279,7 @@ func TestEnsureMetadataBranch_DoesNotFastForwardWhenBehind(t *testing.T) {
 	}
 
 	// Re-open to clear caches
-	repo, err = git.PlainOpenWithOptions(cloneDir, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
+	repo, err = git.PlainOpen(cloneDir)
 	if err != nil {
 		t.Fatalf("failed to reopen repo: %v", err)
 	}
@@ -1424,6 +1426,63 @@ func TestReadLatestSessionPromptFromCommittedTree(t *testing.T) {
 		got := ReadLatestSessionPromptFromCommittedTree(tree, cpID, 0)
 		if got != "Some prompt" {
 			t.Errorf("got %q, want %q", got, "Some prompt")
+		}
+	})
+
+	t.Run("falls back to earlier session when latest has no prompt", func(t *testing.T) {
+		t.Parallel()
+		// Session 1 (latest) has no prompt.txt, session 0 does.
+		// This happens when a test session gets condensed alongside a real one.
+		tree := buildCommittedTree(t, map[string]string{
+			"a3/b2c4d5e6f7/0/prompt.txt":    "Real session prompt",
+			"a3/b2c4d5e6f7/1/metadata.json": `{"session_id":"test"}`,
+		})
+
+		got := ReadLatestSessionPromptFromCommittedTree(tree, cpID, 2)
+		if got != "Real session prompt" {
+			t.Errorf("got %q, want %q", got, "Real session prompt")
+		}
+	})
+
+	t.Run("falls back through multiple empty sessions to find prompt", func(t *testing.T) {
+		t.Parallel()
+		// Sessions 2 and 1 have no prompt, session 0 does.
+		tree := buildCommittedTree(t, map[string]string{
+			"a3/b2c4d5e6f7/0/prompt.txt":    "Original prompt",
+			"a3/b2c4d5e6f7/1/metadata.json": `{"session_id":"s1"}`,
+			"a3/b2c4d5e6f7/2/metadata.json": `{"session_id":"s2"}`,
+		})
+
+		got := ReadLatestSessionPromptFromCommittedTree(tree, cpID, 3)
+		if got != "Original prompt" {
+			t.Errorf("got %q, want %q", got, "Original prompt")
+		}
+	})
+
+	t.Run("returns empty when no session has a prompt", func(t *testing.T) {
+		t.Parallel()
+		tree := buildCommittedTree(t, map[string]string{
+			"a3/b2c4d5e6f7/0/metadata.json": `{"session_id":"s0"}`,
+			"a3/b2c4d5e6f7/1/metadata.json": `{"session_id":"s1"}`,
+		})
+
+		got := ReadLatestSessionPromptFromCommittedTree(tree, cpID, 2)
+		if got != "" {
+			t.Errorf("got %q, want empty string", got)
+		}
+	})
+
+	t.Run("falls back when latest has empty prompt.txt", func(t *testing.T) {
+		t.Parallel()
+		// Latest session has a prompt.txt file but it's empty — should fall back.
+		tree := buildCommittedTree(t, map[string]string{
+			"a3/b2c4d5e6f7/0/prompt.txt": "Real prompt",
+			"a3/b2c4d5e6f7/1/prompt.txt": "",
+		})
+
+		got := ReadLatestSessionPromptFromCommittedTree(tree, cpID, 2)
+		if got != "Real prompt" {
+			t.Errorf("got %q, want %q", got, "Real prompt")
 		}
 	})
 

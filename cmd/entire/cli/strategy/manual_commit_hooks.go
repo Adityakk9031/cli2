@@ -30,10 +30,10 @@ import (
 	"github.com/entireio/cli/perf"
 	"github.com/entireio/cli/redact"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/utils/binary"
+	"github.com/go-git/go-git/v6"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/go-git/go-git/v6/utils/binary"
 )
 
 // hasTTY checks if /dev/tty is available for interactive prompts.
@@ -502,7 +502,7 @@ func (s *ManualCommitStrategy) PrepareCommitMsg(ctx context.Context, commitMsgFi
 
 	// Write updated message back
 	_, writeCommitMessageSpan := perf.Start(ctx, "write_commit_message")
-	if err := os.WriteFile(commitMsgFile, []byte(message), 0o600); err != nil {
+	if err := os.WriteFile(commitMsgFile, []byte(message), 0o600); err != nil { //nolint:gosec // path from git hook arg
 		writeCommitMessageSpan.RecordError(err)
 		writeCommitMessageSpan.End()
 		return nil
@@ -572,7 +572,7 @@ func (s *ManualCommitStrategy) handleAmendCommitMsg(ctx context.Context, commitM
 
 		// Restore the trailer
 		message = addCheckpointTrailer(message, cpID)
-		if writeErr := os.WriteFile(commitMsgFile, []byte(message), 0o600); writeErr != nil {
+		if writeErr := os.WriteFile(commitMsgFile, []byte(message), 0o600); writeErr != nil { //nolint:gosec // path from git hook arg
 			return nil //nolint:nilerr // Hook must be silent on failure
 		}
 
@@ -1652,7 +1652,7 @@ func (s *ManualCommitStrategy) addTrailerForAgentCommit(logCtx context.Context, 
 		slog.String("session_id", state.SessionID),
 	)
 
-	if err := os.WriteFile(commitMsgFile, []byte(message), 0o600); err != nil {
+	if err := os.WriteFile(commitMsgFile, []byte(message), 0o600); err != nil { //nolint:gosec // path from git hook arg
 		return nil //nolint:nilerr // Hook must be silent on failure
 	}
 	return nil

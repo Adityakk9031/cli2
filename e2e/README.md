@@ -1,6 +1,6 @@
 # E2E Tests
 
-End-to-end tests for the `entire` CLI against real agents (Claude Code, Gemini CLI, OpenCode, Cursor, Factory AI Droid).
+End-to-end tests for the `entire` CLI against real agents (Claude Code, Gemini CLI, OpenCode, Cursor, Factory AI Droid, Copilot CLI).
 
 ## Commands
 
@@ -11,6 +11,7 @@ mise run test:e2e --agent gemini-cli [filter]        # Gemini CLI only
 mise run test:e2e --agent opencode [filter]          # OpenCode only
 mise run test:e2e --agent cursor [filter]            # Cursor only
 mise run test:e2e --agent factoryai-droid [filter]   # Factory AI Droid only
+mise run test:e2e --agent copilot-cli [filter]       # Copilot CLI only
 go build ./...                                      # compile check (no agent CLI needed)
 ```
 
@@ -48,13 +49,14 @@ e2e/
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `E2E_AGENT` | Agent to test (`claude-code`, `gemini-cli`, `opencode`, `cursor`, `factoryai-droid`) | all registered |
+| `E2E_AGENT` | Agent to test (`claude-code`, `gemini-cli`, `opencode`, `cursor`, `factoryai-droid`, `copilot-cli`) | all registered |
 | `E2E_ENTIRE_BIN` | Path to a pre-built `entire` binary | builds from source |
 | `E2E_TIMEOUT` | Timeout per prompt | `2m` |
 | `E2E_KEEP_REPOS` | Set to `1` to preserve temp repos after test | unset |
 | `E2E_ARTIFACT_DIR` | Override artifact output directory | `e2e/artifacts/<timestamp>` |
 | `ANTHROPIC_API_KEY` | Required for Claude Code | — |
 | `GEMINI_API_KEY` | Required for Gemini CLI | — |
+| `COPILOT_GITHUB_TOKEN` | Required for Copilot CLI (or `gh auth login`) | — |
 
 ## Debugging Failures
 
