@@ -38,7 +38,9 @@ The GitHub Actions workflow uses these secrets:
 
 - `ANTHROPIC_API_KEY` for Claude triage
 - `SLACK_BOT_TOKEN` for start and completion replies
-- `GITHUB_TOKEN` for the repository dispatch and repository checkout
+- The built-in `${{ github.token }}` for repository dispatch and repository checkout
+
+The externally deployed `cmd/e2e-triage-dispatch` service uses `GITHUB_TOKEN` to call the GitHub dispatch API.
 
 ## Manual Fallback
 
