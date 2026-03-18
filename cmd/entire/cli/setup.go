@@ -97,7 +97,9 @@ func parseCheckpointRemoteFlag(value string) (provider, repo string, err error) 
 // Shared by root command (no args), `entire configure`, and `entire enable` on fresh repos.
 func runSetupFlow(ctx context.Context, w io.Writer, opts EnableOptions) error {
 	// Discover external agent plugins so they appear in agent selection.
-	external.DiscoverAndRegister(ctx)
+	// Use DiscoverAndRegisterAlways to bypass the external_agents setting —
+	// during setup the setting doesn't exist yet.
+	external.DiscoverAndRegisterAlways(ctx)
 
 	agents, err := detectOrSelectAgent(ctx, w, nil)
 	if err != nil {
@@ -111,7 +113,9 @@ func runSetupFlow(ctx context.Context, w io.Writer, opts EnableOptions) error {
 // Already-installed agents cannot be deselected.
 func runAddAgents(ctx context.Context, w io.Writer, opts EnableOptions) error {
 	// Discover external agent plugins.
-	external.DiscoverAndRegister(ctx)
+	// Use DiscoverAndRegisterAlways to bypass the external_agents setting —
+	// during setup the setting doesn't exist yet.
+	external.DiscoverAndRegisterAlways(ctx)
 
 	installedNames := GetAgentsWithHooksInstalled(ctx)
 
@@ -314,7 +318,7 @@ Use --remove to remove a specific agent's hooks:
 	cmd.Flags().MarkHidden("local-dev") //nolint:errcheck,gosec // flag is defined above
 	cmd.Flags().BoolVar(&opts.UseLocalSettings, "local", false, "Write settings to .entire/settings.local.json instead of .entire/settings.json")
 	cmd.Flags().BoolVar(&opts.UseProjectSettings, "project", false, "Write settings to .entire/settings.json even if it already exists")
-	cmd.Flags().StringVar(&agentName, agentFlagName, "", "Enable a specific agent (e.g., "+strings.Join(agent.StringList(), ", ")+")")
+	cmd.Flags().StringVar(&agentName, agentFlagName, "", "Enable a specific agent (e.g., "+strings.Join(agent.StringList(), ", ")+"; external agents on $PATH are also available)")
 	cmd.Flags().StringVar(&removeAgentName, "remove", "", "Remove a specific agent's hooks (e.g., "+strings.Join(agent.StringList(), ", ")+")")
 	cmd.Flags().BoolVarP(&opts.ForceHooks, "force", "f", false, "Force reinstall hooks (removes existing Entire hooks first)")
 	cmd.Flags().BoolVar(&opts.SkipPushSessions, "skip-push-sessions", false, "Disable automatic pushing of session logs on git push")
@@ -405,7 +409,7 @@ If Entire is already configured but disabled, this re-enables it.`,
 	cmd.Flags().MarkHidden("ignore-untracked") //nolint:errcheck,gosec // flag is defined above
 	cmd.Flags().BoolVar(&opts.UseLocalSettings, "local", false, "Write settings to .entire/settings.local.json instead of .entire/settings.json")
 	cmd.Flags().BoolVar(&opts.UseProjectSettings, "project", false, "Write settings to .entire/settings.json even if it already exists")
-	cmd.Flags().StringVar(&agentName, agentFlagName, "", "Agent to set up hooks for (e.g., "+strings.Join(agent.StringList(), ", ")+"). Enables non-interactive mode.")
+	cmd.Flags().StringVar(&agentName, agentFlagName, "", "Agent to set up hooks for (e.g., "+strings.Join(agent.StringList(), ", ")+"; external agents on $PATH are also available). Enables non-interactive mode.")
 	cmd.Flags().BoolVarP(&opts.ForceHooks, "force", "f", false, "Force reinstall hooks (removes existing Entire hooks first)")
 	cmd.Flags().BoolVar(&opts.SkipPushSessions, "skip-push-sessions", false, "Disable automatic pushing of session logs on git push")
 	cmd.Flags().StringVar(&opts.CheckpointRemote, "checkpoint-remote", "", "Checkpoint remote in provider:owner/repo format (e.g., github:org/checkpoints-repo)")
@@ -497,6 +501,14 @@ func runEnableInteractive(ctx context.Context, w io.Writer, agents []agent.Agent
 	}
 	if opts.AbsoluteGitHookPath {
 		settings.AbsoluteGitHookPath = true
+	}
+
+	// Auto-enable external_agents if any selected agent is external.
+	for _, ag := range agents {
+		if external.IsExternal(ag) {
+			settings.ExternalAgents = true
+			break
+		}
 	}
 
 	opts.applyStrategyOptions(settings)
