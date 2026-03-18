@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
@@ -49,7 +50,10 @@ func DiscoverAndRegister(ctx context.Context) {
 			}
 			seen[name] = true
 
-			agentName := types.AgentName(strings.TrimPrefix(name, binaryPrefix))
+			// Strip Windows executable extensions (.exe, .bat) before deriving agent name.
+			// On Unix, binaries have no extension, so this is a no-op.
+			cleanName := stripExeExt(name)
+			agentName := types.AgentName(strings.TrimPrefix(cleanName, binaryPrefix))
 			if registered[agentName] {
 				logging.Debug(ctx, "skipping external agent (name conflict with built-in)",
 					slog.String("binary", name),
@@ -61,8 +65,8 @@ func DiscoverAndRegister(ctx context.Context) {
 			if err != nil || finfo.IsDir() {
 				continue
 			}
-			// Check executable bit (on Unix)
-			if finfo.Mode()&0o111 == 0 {
+			// Check executable bit (on Unix; Windows doesn't set execute bits)
+			if runtime.GOOS != "windows" && finfo.Mode()&0o111 == 0 {
 				continue
 			}
 
@@ -93,4 +97,17 @@ func DiscoverAndRegister(ctx context.Context) {
 				slog.String("binary", binPath))
 		}
 	}
+}
+
+// stripExeExt removes Windows executable extensions (.exe, .bat, .cmd) from a
+// file name so that the agent name derived from the binary matches on all platforms.
+// On Unix this is effectively a no-op because binaries have no extension.
+func stripExeExt(name string) string {
+	lower := strings.ToLower(name)
+	for _, ext := range []string{".exe", ".bat", ".cmd"} {
+		if strings.HasSuffix(lower, ext) {
+			return name[:len(name)-len(ext)]
+		}
+	}
+	return name
 }
