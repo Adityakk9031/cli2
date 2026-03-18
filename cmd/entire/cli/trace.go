@@ -49,25 +49,16 @@ func parseTraceEntry(line string) *traceEntry {
 
 	entry := &traceEntry{}
 
-	// Extract op
+	// Best-effort field extraction: missing or mistyped fields keep their
+	// zero values rather than discarding the entire entry.
 	if opRaw, ok := raw["op"]; ok {
-		if err := json.Unmarshal(opRaw, &entry.Op); err != nil {
-			return nil
-		}
+		_ = json.Unmarshal(opRaw, &entry.Op)
 	}
-
-	// Extract duration_ms
 	if dRaw, ok := raw["duration_ms"]; ok {
-		if err := json.Unmarshal(dRaw, &entry.DurationMs); err != nil {
-			return nil
-		}
+		_ = json.Unmarshal(dRaw, &entry.DurationMs)
 	}
-
-	// Extract error flag
 	if errRaw, ok := raw["error"]; ok {
-		if err := json.Unmarshal(errRaw, &entry.Error); err != nil {
-			return nil
-		}
+		_ = json.Unmarshal(errRaw, &entry.Error)
 	}
 
 	// Extract time

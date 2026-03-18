@@ -121,7 +121,9 @@ func (s *Span) End() {
 }
 
 // childStepKey returns a unique key for a child span name.
-// First occurrence keeps the original name; subsequent get .1, .2, etc.
+// First occurrence keeps the original name; subsequent get ~1, ~2, etc.
+// Uses "~" separator to avoid collision with grandchild "." indexing
+// (e.g. steps.foo.0_ms for loop iterations).
 // The seen map is updated in place.
 func childStepKey(name string, seen map[string]int) string {
 	n := seen[name]
@@ -129,7 +131,7 @@ func childStepKey(name string, seen map[string]int) string {
 	if n == 0 {
 		return name
 	}
-	return fmt.Sprintf("%s.%d", name, n)
+	return fmt.Sprintf("%s~%d", name, n)
 }
 
 // LoopSpan wraps a Span that groups loop iterations. Each call to Iteration
@@ -161,9 +163,14 @@ func (l *LoopSpan) Iteration(ctx context.Context) (context.Context, *Span) {
 	return Start(ctx, l.span.name)
 }
 
-// End completes the loop span by ending the underlying span.
-// Note: this does not itself iterate over and end unended iteration spans;
-// any automatic cleanup of child spans occurs when the root span is ended.
+// End completes the loop span, auto-ending any unended iteration children first
+// so their durations are captured at loop-end time rather than deferring to the
+// root span's End() (which may run much later).
 func (l *LoopSpan) End() {
+	for _, child := range l.span.children {
+		if !child.ended {
+			child.End()
+		}
+	}
 	l.span.End()
 }

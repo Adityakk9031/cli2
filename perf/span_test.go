@@ -224,17 +224,17 @@ func TestChildStepKey_Deduplication(t *testing.T) {
 		t.Errorf("first save_state = %q, want %q", got, stepSave)
 	}
 
-	// Second occurrence gets .1 suffix
-	if got := childStepKey(stepCheck, seen); got != "check_content.1" {
-		t.Errorf("second check_content = %q, want %q", got, "check_content.1")
+	// Second occurrence gets ~1 suffix
+	if got := childStepKey(stepCheck, seen); got != "check_content~1" {
+		t.Errorf("second check_content = %q, want %q", got, "check_content~1")
 	}
-	if got := childStepKey(stepSave, seen); got != "save_state.1" {
-		t.Errorf("second save_state = %q, want %q", got, "save_state.1")
+	if got := childStepKey(stepSave, seen); got != "save_state~1" {
+		t.Errorf("second save_state = %q, want %q", got, "save_state~1")
 	}
 
-	// Third occurrence gets .2
-	if got := childStepKey(stepCheck, seen); got != "check_content.2" {
-		t.Errorf("third check_content = %q, want %q", got, "check_content.2")
+	// Third occurrence gets ~2
+	if got := childStepKey(stepCheck, seen); got != "check_content~2" {
+		t.Errorf("third check_content = %q, want %q", got, "check_content~2")
 	}
 
 	// Unique names are unaffected
@@ -275,7 +275,7 @@ func TestEnd_DuplicateChildNames_AllPreserved(t *testing.T) {
 	}
 
 	// Verify the children have correct names for deduplication.
-	// End() uses childStepKey which gives: check_content, save_state, check_content.1, save_state.1
+	// End() uses childStepKey which gives: check_content, save_state, check_content~1, save_state~1
 	// We verify the structure is intact so End() can produce unique keys.
 	names := make([]string, len(parent.children))
 	for i, c := range parent.children {
@@ -326,14 +326,14 @@ func TestStartLoop_IterationsAutoEnded(t *testing.T) {
 	loopCtx, loop := StartLoop(ctx, "loop")
 	_, iter0 := loop.Iteration(loopCtx)
 	iter0.duration = 50 * time.Millisecond
-	// iter0.ended intentionally NOT set — should be auto-ended when root.End() runs
+	// iter0.ended intentionally NOT set — should be auto-ended when loop.End() runs
 	loop.End()
 
-	root.End()
-
 	if !iter0.ended {
-		t.Error("iteration should be auto-ended when loop ends")
+		t.Error("iteration should be auto-ended when loop.End() runs")
 	}
+
+	root.End()
 }
 
 func TestStartLoop_IterationWithErrors(t *testing.T) {
