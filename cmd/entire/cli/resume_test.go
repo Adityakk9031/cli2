@@ -1,9 +1,10 @@
 package cli
 
 import (
+	"bytes"
 	"context"
-	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/filemode"
 	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/spf13/cobra"
 )
 
 func TestFirstLine(t *testing.T) {
@@ -205,7 +207,7 @@ func TestResumeFromCurrentBranch_NoCheckpoint(t *testing.T) {
 	setupResumeTestRepo(t, tmpDir, false)
 
 	// Run resumeFromCurrentBranch - should not error, just report no checkpoint found
-	err := resumeFromCurrentBranch(context.Background(), "master", false)
+	err := resumeFromCurrentBranch(context.Background(), io.Discard, io.Discard, "master", false)
 	if err != nil {
 		t.Errorf("resumeFromCurrentBranch() returned error for commit without checkpoint: %v", err)
 	}
@@ -229,7 +231,11 @@ func TestRunResume_AlreadyOnBranch(t *testing.T) {
 	}
 
 	// Run resume on the branch we're already on - should skip checkout
-	err := runResume(context.Background(), "feature", false)
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	err := runResume(context.Background(), cmd, "feature", false)
 	// Should not error (no session, but shouldn't error)
 	if err != nil {
 		t.Errorf("runResume() returned error when already on branch: %v", err)
@@ -243,7 +249,11 @@ func TestRunResume_BranchDoesNotExist(t *testing.T) {
 	setupResumeTestRepo(t, tmpDir, false)
 
 	// Run resume on a branch that doesn't exist
-	err := runResume(context.Background(), "nonexistent", false)
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	err := runResume(context.Background(), cmd, "nonexistent", false)
 	if err == nil {
 		t.Error("runResume() expected error for nonexistent branch, got nil")
 	}
@@ -262,7 +272,11 @@ func TestRunResume_UncommittedChanges(t *testing.T) {
 	}
 
 	// Run resume - should fail due to uncommitted changes
-	err := runResume(context.Background(), "feature", false)
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	err := runResume(context.Background(), cmd, "feature", false)
 	if err == nil {
 		t.Error("runResume() expected error for uncommitted changes, got nil")
 	}
@@ -614,17 +628,13 @@ func TestCheckRemoteMetadata_MetadataExistsOnRemote(t *testing.T) {
 		t.Fatalf("Failed to remove local metadata branch: %v", err)
 	}
 
-	// Call checkRemoteMetadata - should find it on remote and attempt to fetch
-	// In this test environment without a real origin remote, the fetch will fail
-	// but it should return a SilentError (user-friendly error message already printed)
+	// Call checkRemoteMetadata - should find metadata on the remote tree and
+	// attempt to resume, but fail because the test checkpoint has no agent field.
 	err = checkRemoteMetadata(context.Background(), checkpointID)
 	if err == nil {
-		t.Error("checkRemoteMetadata() should return SilentError when fetch fails")
-	} else {
-		var silentErr *SilentError
-		if !errors.As(err, &silentErr) {
-			t.Errorf("checkRemoteMetadata() should return SilentError, got: %v", err)
-		}
+		t.Error("checkRemoteMetadata() should return error when agent is missing from metadata")
+	} else if !strings.Contains(err.Error(), "failed to resolve agent") {
+		t.Errorf("checkRemoteMetadata() expected agent resolution error, got: %v", err)
 	}
 }
 
@@ -726,11 +736,121 @@ func TestResumeFromCurrentBranch_NoMetadataAvailable(t *testing.T) {
 		t.Fatalf("Failed to create commit with checkpoint: %v", err)
 	}
 
-	// Run resumeFromCurrentBranch - metadata branch doesn't exist locally or on remote,
-	// so getMetadataTree fails and checkRemoteMetadata prints an informational message
-	// and returns nil (no remote branch to fetch from).
-	err = resumeFromCurrentBranch(context.Background(), "master", false)
+	// Run resumeFromCurrentBranch - no local or remote metadata branch exists,
+	// so checkRemoteMetadata prints an informational message and returns nil.
+	err = resumeFromCurrentBranch(context.Background(), io.Discard, io.Discard, "master", false)
 	if err != nil {
-		t.Errorf("resumeFromCurrentBranch() should return nil when no metadata available, got: %v", err)
+		t.Errorf("resumeFromCurrentBranch() returned unexpected error: %v", err)
+	}
+}
+
+func TestDisplayRestoredSessions_SingleSessionOutput(t *testing.T) {
+	t.Parallel()
+
+	session := strategy.RestoredSession{
+		SessionID: "2026-02-02-resume-output",
+		Agent:     "Claude Code",
+		Prompt:    "Implement auth",
+		CreatedAt: time.Date(2026, time.February, 2, 12, 0, 0, 0, time.UTC),
+	}
+
+	ag, err := strategy.ResolveAgentForRewind(session.Agent)
+	if err != nil {
+		t.Fatalf("ResolveAgentForRewind() error = %v", err)
+	}
+
+	var output bytes.Buffer
+	if err := displayRestoredSessions(&output, []strategy.RestoredSession{session}); err != nil {
+		t.Fatalf("displayRestoredSessions() error = %v", err)
+	}
+
+	got := output.String()
+	if !strings.Contains(got, "✓ Restored session 2026-02-02-resume-output.\n") {
+		t.Fatalf("displayRestoredSessions() missing session header, got: %q", got)
+	}
+	if !strings.Contains(got, "\nTo continue this session, run:\n") {
+		t.Fatalf("displayRestoredSessions() missing continuation header, got: %q", got)
+	}
+	wantCommand := "  " + ag.FormatResumeCommand(session.SessionID) + "  # Implement auth\n"
+	if !strings.Contains(got, wantCommand) {
+		t.Fatalf("displayRestoredSessions() missing command %q in %q", wantCommand, got)
+	}
+}
+
+func TestPrintMultiSessionResumeCommands_SingleSessionHasCheckmark(t *testing.T) {
+	t.Parallel()
+
+	sessions := []strategy.RestoredSession{
+		{
+			SessionID: "2026-02-02-rewind-single",
+			Agent:     "Claude Code",
+			Prompt:    "Fix the bug",
+		},
+	}
+
+	ag, err := strategy.ResolveAgentForRewind("Claude Code")
+	if err != nil {
+		t.Fatalf("ResolveAgentForRewind() error = %v", err)
+	}
+
+	var output bytes.Buffer
+	var errOutput bytes.Buffer
+	printMultiSessionResumeCommands(&output, &errOutput, sessions)
+
+	got := output.String()
+	if !strings.Contains(got, "✓ Restored session 2026-02-02-rewind-single.\n") {
+		t.Fatalf("printMultiSessionResumeCommands() single session missing ✓ header, got: %q", got)
+	}
+	if !strings.Contains(got, "\nTo continue this session, run:\n") {
+		t.Fatalf("printMultiSessionResumeCommands() missing continuation line, got: %q", got)
+	}
+	wantCommand := "  " + ag.FormatResumeCommand("2026-02-02-rewind-single") + "  # Fix the bug\n"
+	if !strings.Contains(got, wantCommand) {
+		t.Fatalf("printMultiSessionResumeCommands() missing command %q in %q", wantCommand, got)
+	}
+	if errOutput.Len() != 0 {
+		t.Fatalf("printMultiSessionResumeCommands() unexpected stderr: %q", errOutput.String())
+	}
+}
+
+func TestPrintMultiSessionResumeCommands_OutputMatchesResumeStyle(t *testing.T) {
+	t.Parallel()
+
+	sessions := []strategy.RestoredSession{
+		{
+			SessionID: "2026-02-02-rewind-old",
+			Agent:     "Claude Code",
+			Prompt:    "Old prompt",
+		},
+		{
+			SessionID: "2026-02-02-rewind-new",
+			Agent:     "Claude Code",
+			Prompt:    "Most recent prompt",
+		},
+	}
+
+	ag, err := strategy.ResolveAgentForRewind("Claude Code")
+	if err != nil {
+		t.Fatalf("ResolveAgentForRewind() error = %v", err)
+	}
+
+	var output bytes.Buffer
+	var errOutput bytes.Buffer
+	printMultiSessionResumeCommands(&output, &errOutput, sessions)
+
+	got := output.String()
+	if !strings.Contains(got, "\n✓ Restored 2 sessions. To continue, run:\n") {
+		t.Fatalf("printMultiSessionResumeCommands() missing multi-session header, got: %q", got)
+	}
+	oldCommand := "  " + ag.FormatResumeCommand("2026-02-02-rewind-old") + "  # Old prompt\n"
+	if !strings.Contains(got, oldCommand) {
+		t.Fatalf("printMultiSessionResumeCommands() missing older command %q in %q", oldCommand, got)
+	}
+	newCommand := "  " + ag.FormatResumeCommand("2026-02-02-rewind-new") + "  # Most recent prompt (most recent)\n"
+	if !strings.Contains(got, newCommand) {
+		t.Fatalf("printMultiSessionResumeCommands() missing latest command %q in %q", newCommand, got)
+	}
+	if errOutput.Len() != 0 {
+		t.Fatalf("printMultiSessionResumeCommands() unexpected stderr: %q", errOutput.String())
 	}
 }
