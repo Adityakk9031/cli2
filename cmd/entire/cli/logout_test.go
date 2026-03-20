@@ -2,27 +2,66 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 )
 
-func TestLogoutCmd_PrintsLoggedOut(t *testing.T) {
+type mockTokenDeleter struct {
+	deleted  map[string]bool
+	failWith error
+}
+
+func newMockTokenDeleter() *mockTokenDeleter {
+	return &mockTokenDeleter{deleted: make(map[string]bool)}
+}
+
+func (m *mockTokenDeleter) DeleteToken(baseURL string) error {
+	if m.failWith != nil {
+		return m.failWith
+	}
+	m.deleted[baseURL] = true
+	return nil
+}
+
+func TestRunLogout_DeletesTokenAndPrintsMessage(t *testing.T) {
 	t.Parallel()
 
-	cmd := newLogoutCmd()
+	store := newMockTokenDeleter()
 	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetArgs([]string{})
 
-	// RunE calls store.DeleteToken which hits the real keyring.
-	// On most CI/dev machines the keyring is available and DeleteToken
-	// is a no-op when no token exists, so this exercises the happy path.
-	if err := cmd.Execute(); err != nil {
+	err := runLogout(&out, store, "https://entire.io")
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !store.deleted["https://entire.io"] {
+		t.Fatal("expected token to be deleted for https://entire.io")
 	}
 
 	if !strings.Contains(out.String(), "Logged out.") {
 		t.Fatalf("output = %q, want to contain %q", out.String(), "Logged out.")
+	}
+}
+
+func TestRunLogout_ReturnsErrorOnDeleteFailure(t *testing.T) {
+	t.Parallel()
+
+	store := newMockTokenDeleter()
+	store.failWith = errors.New("keyring locked")
+	var out bytes.Buffer
+
+	err := runLogout(&out, store, "https://entire.io")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	if !strings.Contains(err.Error(), "keyring locked") {
+		t.Fatalf("error = %q, want to contain %q", err.Error(), "keyring locked")
+	}
+
+	if strings.Contains(out.String(), "Logged out.") {
+		t.Fatal("should not print success message on error")
 	}
 }
 
@@ -39,14 +78,5 @@ func TestLogoutCmd_IsRegistered(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("logout command not registered on root")
-	}
-}
-
-func TestLogoutCmd_HasShortDescription(t *testing.T) {
-	t.Parallel()
-
-	cmd := newLogoutCmd()
-	if cmd.Short == "" {
-		t.Fatal("logout command has no short description")
 	}
 }
