@@ -25,4 +25,6 @@ claude \
     "Glob" \
   -p "$triage_args" \
   2>&1 | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g; s/\x1b\[[?][0-9]*[a-zA-Z]//g' \
-  | tee "$TRIAGE_OUTPUT_FILE"
+  > "$TRIAGE_OUTPUT_FILE"
+
+echo "Triage complete for ${E2E_AGENT}. See the Job Summary tab for the rendered report."
