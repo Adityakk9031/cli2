@@ -219,7 +219,7 @@ jobs:
 
       - name: Extract plan output
         id: plan_output
-        if: steps.plan.outcome == 'success'
+        if: steps.plan.outcome == 'success' && steps.plan.outputs.execution_file != ''
         shell: bash
         env:
           EXECUTION_FILE: ${{ steps.plan.outputs.execution_file }}
@@ -249,7 +249,7 @@ jobs:
           "$RUNNER_TEMP/post-slack-message.sh" "$message"
 
       - name: Post fix plan to Slack
-        if: steps.plan.outcome == 'success' && env.SLACK_BOT_TOKEN != '' && env.SLACK_CHANNEL != '' && env.SLACK_THREAD_TS != ''
+        if: steps.plan_output.outcome == 'success' && env.SLACK_BOT_TOKEN != '' && env.SLACK_CHANNEL != '' && env.SLACK_THREAD_TS != ''
         shell: bash
         env:
           PLAN_FILE: ${{ github.workspace }}/e2e-triage-artifacts/${{ matrix.agent }}/plan.md
@@ -280,7 +280,7 @@ jobs:
           retention-days: 7
 
       - name: Upload plan artifact
-        if: always() && steps.plan.outcome == 'success'
+        if: always() && steps.plan_output.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
           name: e2e-plan-${{ matrix.agent }}
